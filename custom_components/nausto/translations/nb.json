@@ -1,0 +1,62 @@
+{
+  "title": "Nausto",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Koble til Nausto",
+        "description": "Velg entitetene som gjelder båten. Opprett en datakilde under Båten → Sensorer i Nausto og lim inn paringskoden her. Koden gjelder i ti minutter. Etter tilkoblingen velger du hva Nausto skal følge og hvilken komponent hver sensor tilhører.",
+        "data": {
+          "pairing_code": "Paringskode fra Nausto",
+          "entities": "Entiteter til båten"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke nå Nausto. Kontroller internettforbindelsen og prøv igjen.",
+      "pairing_failed": "Koden kunne ikke brukes. Lag en ny kode i Nausto og prøv igjen.",
+      "invalid_code": "Lim inn hele paringskoden fra Nausto.",
+      "invalid_entities": "Velg høyst 64 støttede entiteter fra listen.",
+      "source_limit": "Entitetene kommer fra flere enn 16 kilder. Velg færre enheter.",
+      "wrong_boat": "Koden gjelder en annen tilkobling. Lag en ny kode for den opprinnelige datakilden i Nausto.",
+      "wrong_connection": "Tilkoblingen kunne ikke bekreftes. Lag en ny kode i Nausto.",
+      "instance_changed": "Denne tilkoblingen hører til en annen Home Assistant-installasjon. Fjern de gamle Nausto-integrasjonene her og legg til på nytt. Mottatt historikk i Nausto beholdes.",
+      "pairing_limit": "Flere oppsett er allerede startet. Fullfør ett av dem eller prøv igjen om ti minutter.",
+      "connection_limit": "Fem Nausto-tilkoblinger er allerede lagret. Fjern en ubrukt tilkobling først.",
+      "local_state": "Lokal lagring kunne ikke åpnes. Kontroller lagringsplassen og prøv igjen."
+    },
+    "abort": {
+      "already_configured": "Denne Nausto-tilkoblingen finnes allerede.",
+      "reauth_successful": "Tilkoblingen til Nausto er fornyet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sensorer til Nausto",
+        "description": "Velg entitetene som skal tilbys båten. Du velger hva som følges, tilhørighet og primærkilde under Sensorer i Nausto.",
+        "data": {
+          "entities": "Entiteter til båten",
+          "retry_failed": "Prøv tilkoblingen på nytt"
+        }
+      }
+    },
+    "error": {
+      "invalid_entities": "Velg høyst 64 støttede entiteter fra listen.",
+      "source_limit": "Entitetene kommer fra flere enn 16 kilder. Velg færre enheter."
+    }
+  },
+  "exceptions": {
+    "instance_changed": {
+      "message": "Denne tilkoblingen hører til en annen Home Assistant-installasjon. Fjern de gamle Nausto-integrasjonene her og legg til på nytt. Mottatt historikk i Nausto beholdes."
+    },
+    "pairing_required": {
+      "message": "Nausto må kobles til på nytt med en ny paringskode."
+    }
+  },
+  "issues": {
+    "delivery": {
+      "title": "Sensordeling trenger oppfølging",
+      "description": "Åpne Nausto-integrasjonen og last ned diagnostikk for kø og datagap. Konfigurer lar deg prøve avviste sendinger igjen. Et rapportert datagap kan ikke gjenopprettes."
+    }
+  }
+}

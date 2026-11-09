@@ -1,0 +1,62 @@
+{
+  "title": "Nausto",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Nausto",
+        "description": "Choose the entities for your boat. Open Boat → Sensors in Nausto, add a data source and paste its pairing code here. The code expires after ten minutes. Then return to Nausto to choose which sensors to follow and connect them to the right components.",
+        "data": {
+          "pairing_code": "Pairing code from Nausto",
+          "entities": "Entities for the boat"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach Nausto. Check your internet connection and try again.",
+      "pairing_failed": "This code could not be used. Create a new code in Nausto and try again.",
+      "invalid_code": "Paste the complete pairing code from Nausto.",
+      "invalid_entities": "Choose up to 64 supported entities from the list.",
+      "source_limit": "These entities use more than 16 sources. Choose fewer devices.",
+      "wrong_boat": "This code belongs to a different connection. Create a code for the original data source in Nausto.",
+      "wrong_connection": "The connection could not be verified. Create a new code in Nausto.",
+      "instance_changed": "This connection belongs to another Home Assistant instance. Remove the old Nausto integrations here, then add Nausto again. History already received in Nausto is kept.",
+      "pairing_limit": "Several setup attempts are in progress. Finish one or try again in ten minutes.",
+      "connection_limit": "Five Nausto connections are already stored. Remove an unused connection first.",
+      "local_state": "Could not open local storage. Check the available storage and try again."
+    },
+    "abort": {
+      "already_configured": "This Nausto connection is already configured.",
+      "reauth_successful": "The Nausto connection has been renewed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sensors for Nausto",
+        "description": "Choose the entities to offer to your boat. Open Sensors in Nausto to choose which ones to follow, assign components and select primary sources.",
+        "data": {
+          "entities": "Entities for the boat",
+          "retry_failed": "Retry the connection"
+        }
+      }
+    },
+    "error": {
+      "invalid_entities": "Choose up to 64 supported entities from the list.",
+      "source_limit": "These entities use more than 16 sources. Choose fewer devices."
+    }
+  },
+  "exceptions": {
+    "instance_changed": {
+      "message": "This connection belongs to another Home Assistant instance. Remove the old Nausto integrations here, then add Nausto again. History already received in Nausto is kept."
+    },
+    "pairing_required": {
+      "message": "Reconnect Nausto with a new pairing code."
+    }
+  },
+  "issues": {
+    "delivery": {
+      "title": "Sensor sharing needs attention",
+      "description": "Open the Nausto integration and download its diagnostics for queue and data gap counts. Configure lets you retry rejected deliveries. Reported data gaps cannot be recovered."
+    }
+  }
+}

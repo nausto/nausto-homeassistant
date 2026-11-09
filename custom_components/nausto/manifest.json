@@ -1,0 +1,12 @@
+{
+  "domain": "nausto",
+  "name": "Nausto",
+  "codeowners": ["@grolub"],
+  "config_flow": true,
+  "documentation": "https://github.com/nausto/nausto-homeassistant#readme",
+  "integration_type": "service",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/nausto/nausto-homeassistant/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
