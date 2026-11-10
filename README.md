@@ -60,8 +60,13 @@ som selv republiserer sin cache, beviser ikke ny fysisk måling; vurder kildekva
 ## Kø og feilsøking
 
 Opptak lagres privat i `config/.storage/nausto/`, og forsegles omtrent hvert minutt.
-Numeriske verdier begrenses til ett opptak per kanal per minutt; tilstands- og
-tilgjengelighetsendringer bevares raskere. Samme forseglete bytes og måle-ID-er brukes ved
+Numeriske verdier bruker dødbånd (for eksempel 0,1 °C eller 0,05 V), høyst ett vanlig opptak per
+kanal per minutt. En faktisk ny kilderapport tas med etter to minutter uten betydelig endring.
+Polling av samme rapport gir aldri nytt opptak. Faktiske tilstands-, alarm- og
+kvalitetsoverganger lagres straks og vekker en egen sender uten å blokkere opptaket på HTTP.
+Første verdi beholder minuttvinduet. Et vindu med overganger kan sendes før minuttet ved første
+tillatte batchforsøk; overgangene samles varig mens senderen venter. Kø, delingskontroll,
+nettfeil og backoff kan utsette levering. Samme forseglete bytes og måle-ID-er brukes ved
 gjentatt sending og omstart. Sending begrenses til én forespørsel per 30 sekunder, med
 eksponentiell venting og respekt for serverens `Retry-After` (maksimalt én time).
 
@@ -94,7 +99,14 @@ to follow each channel, assign its component and choose its primary source. The 
 options forms are available in English and Norwegian.
 
 Only explicitly selected entities are offered. HA registry IDs keep identities stable through
-renames. Source state-change time and source report confirmation remain separate; a gateway
+renames. Numeric readings use a deadband and a two-minute source-report interval, with ordinary samples
+limited to once per minute. Re-reading an unchanged report never creates a fresh reading.
+Actual state/alarm and quality transitions are saved immediately and wake a separate sender.
+The first value remains a baseline in the minute window. Transition windows can be sent before
+that minute at the next permitted batch attempt, with at least 30 seconds between requests.
+Transitions coalesce durably while waiting. Selection checks, queued batches, network failures
+and server `Retry-After` still apply; sealed retries keep identical bytes and timestamps.
+Source state-change time and source report confirmation remain separate; a gateway
 heartbeat never refreshes a measurement. Unknown/unavailable are preserved. A private SQLite
 queue survives restarts and retries identical batches. Its seven-day / 10,000-observation /
 10-MiB limits and missing HA runtime can leave gaps. Diagnostics expose counts and error types,

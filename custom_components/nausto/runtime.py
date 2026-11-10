@@ -39,7 +39,8 @@ class Runtime:
         self.processing = asyncio.Lock()
         self.state_unsubscribe = None
         self.listeners = []
-        self.writer = self.rescan_task = None
+        self.writer = self.rescan_task = self.delivery_task = None
+        self.delivery_wakeup = None
         self.next_scan = 0
 
     async def db(self, function, *args):
@@ -60,6 +61,8 @@ class Runtime:
         self.entry.async_on_unload(self.unsubscribe)
         self.poll()
         await self.tick()
+        if self.authorized and await self.db(self.store.has_urgent):
+            self.request_delivery()
         await self.health()
 
     async def refresh(self):
@@ -142,7 +145,9 @@ class Runtime:
         while True:
             item = await self.pending.get()
             try:
-                await self.db(self.store.capture, *item)
+                captured = await self.db(self.store.capture, *item)
+                if captured and await self.db(self.store.has_urgent):
+                    self.request_delivery()
                 if self.pending_gap:
                     count, self.pending_gap = self.pending_gap, 0
                     await self.db(self.store.note_gap, count, clock())
@@ -151,6 +156,38 @@ class Runtime:
                 self.pending_gap += 1
             finally:
                 self.pending.task_done()
+
+    @callback
+    def request_delivery(self):
+        # Skriving venter aldri på HTTP. Raske overganger deler ett varig vindu til senderen
+        # får neste lovlige plass; tick beholder fartsgrense, autorisasjon og serverens backoff.
+        if self.stopped or self.delivery_wakeup is not None or self.delivery_task and not self.delivery_task.done():
+            return
+        self.delivery_task = self.entry.async_create_background_task(
+            self.hass, self.deliver_changes(), "nausto-delivery")
+
+    async def deliver_changes(self):
+        try:
+            await self.tick()
+            if self.stopped or not self.authorized or not self.selected or not await self.db(self.store.has_urgent):
+                return
+            control = await self.db(self.store.get, "control", {"attempts": 0, "retry_at": 0, "failure": None})
+            if control["failure"] in ("unauthorized", "rejected", "attempts_exhausted"):
+                return
+            last = await self.db(self.store.get, "last_request", 0)
+            due = max(last + 30_000, control["retry_at"])
+            # Et hendelsesutløst kall følger ikke nødvendigvis periodikkens 30-sekundersfase.
+            # En egen, koalescert vekking treffer neste lovlige luke uten å vente på neste poll.
+            if not self.stopped:
+                self.delivery_wakeup = self.hass.loop.call_later(
+                    max(.1, (due - clock()) / 1000), self.wake_delivery)
+        except Exception:
+            self.local_failure = True
+
+    @callback
+    def wake_delivery(self):
+        self.delivery_wakeup = None
+        self.request_delivery()
 
     async def periodic(self, _now):
         if self.stopped or self.processing.locked():
@@ -199,6 +236,7 @@ class Runtime:
             elif not self.authorized or now - last_control >= 120_000:
                 message = encoded({"schema_version": 1, "action": "heartbeat"})
             else:
+                await self.db(self.store.seal_urgent, now)
                 row = await self.db(self.store.next, now)
                 if row is None:
                     return
@@ -272,6 +310,9 @@ class Runtime:
 
     async def async_stop(self):
         self.stopped = True
+        if self.delivery_wakeup is not None:
+            self.delivery_wakeup.cancel()
+            self.delivery_wakeup = None
         self.unsubscribe()
         if self.rescan_task and not self.rescan_task.done():
             self.rescan_task.cancel()
@@ -289,6 +330,8 @@ class Runtime:
                 await self.db(self.store.note_gap, self.pending.qsize(), clock())
             self.writer.cancel()
             await asyncio.gather(self.writer, return_exceptions=True)
+        if self.delivery_task:
+            await asyncio.gather(self.delivery_task, return_exceptions=True)
         # En utestående kvittering må være ferdig før SQLite-forbindelsen lukkes.
         async with self.network:
             if self.pending_gap:

@@ -1,7 +1,7 @@
 """Felles grenser; mottaket settes fra Naustos offentlige profil ved pakking."""
 
 DOMAIN = "nausto"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 ENDPOINT = "https://xhlmyytzkiwipacspjsg.supabase.co/functions/v1/sensor-ingest"
 MAX_ENTITIES = 64
 MAX_SOURCES = 16

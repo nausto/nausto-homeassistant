@@ -14,6 +14,13 @@ from uuid import UUID, uuid4
 from .const import MAX_ATTEMPTS, MAX_BYTES, MAX_OBSERVATIONS, QUEUE_BYTES, QUEUE_OBSERVATIONS, RETENTION_SECONDS
 
 
+# Kontraktens SI-enheter. To minutter er kortere enn minste ferskhetsvalg på fem minutter.
+DEADBANDS = {"temperature": .1, "voltage": .05, "current": .1, "power": 1,
+             "charge": 36, "ratio": .001, "speed": .05, "angle": .0017453292519943296,
+             "rotation": 1 / 60, "duration": 1}
+REPORT_INTERVAL = 120_000
+
+
 def encoded(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False)
 
@@ -107,6 +114,7 @@ class Store:
         self.db.execute("insert into batches(id,message,created,bytes,count) values(?,?,?,?,?)", (
             batch["batch_id"], message, milliseconds(batch["created_at"]), len(message.encode()), len(batch["observations"])))
         state["batch"] = None
+        state["urgent"] = False
         self._prune(now)
 
     def capture(self, channel: dict, reading: dict, now: int) -> bool:
@@ -125,7 +133,12 @@ class Store:
             transition = previous is not None and (
                 previous.get("quality") != reading["quality"] or
                 (channel["quantity"] in ("state", "alarm") and previous.get("value") != reading["value"]))
-            if previous and (previous["fingerprint"] == fingerprint or (not transition and now - previous["at"] < 60_000)):
+            quiet = previous is not None and (
+                abs(reading["value"] - previous["value"]) < DEADBANDS.get(channel["quantity"], 0)
+                if type(reading["value"]) in (int, float) and type(previous["value"]) in (int, float)
+                else previous["value"] == reading["value"])
+            if previous and (previous["fingerprint"] == fingerprint or (not transition and (
+                    now - previous["at"] < 60_000 or (quiet and now - previous["at"] < REPORT_INTERVAL)))):
                 self.set("captures", state)
                 return False
             observation = {**reading, "measurement_id": measurement_id(now, state.get("last_id"))}
@@ -137,6 +150,7 @@ class Store:
             if len(encoded(candidate).encode()) > MAX_BYTES:
                 raise ValueError("observation_limit")
             state["batch"], state["last_id"] = candidate, observation["measurement_id"]
+            state["urgent"] = bool(state.get("urgent") or transition)
             state["cursors"][channel["id"]] = {"fingerprint": fingerprint, "at": now, "value": reading["value"], "quality": reading["quality"]}
             # Cursormengden følger den avgrensede katalogen, ikke alle historiske HA-entiteter.
             if len(state["cursors"]) > 64:
@@ -147,6 +161,17 @@ class Store:
             self._prune(now)
             return True
 
+    def has_urgent(self) -> bool:
+        state = self.get("captures", {})
+        return bool(state.get("batch") and state.get("urgent"))
+
+    def seal_urgent(self, now: int):
+        with self.transaction():
+            state = self.get("captures", {"batch": None, "cursors": {}, "last_id": None})
+            if state.get("urgent"):
+                self._seal(state, now, True)
+                self.set("captures", state)
+
     def _reconcile(self, allowed, now: int):
         state = self.get("captures", {"batch": None, "cursors": {}, "last_id": None})
         state["cursors"] = {key: value for key, value in state["cursors"].items() if key in allowed}
@@ -156,6 +181,8 @@ class Store:
             if len(kept) != len(before):
                 self._gap(len(before) - len(kept), now)
                 state["batch"] = {**state["batch"], "observations": kept} if kept else None
+                if not kept:
+                    state["urgent"] = False
         for row in self.db.execute("select id,message,count from batches").fetchall():
             if any(o["channel_id"] not in allowed for o in json.loads(row["message"])["observations"]):
                 # Forseglet innhold omskrives aldri, heller ikke etter et tapt svar.
