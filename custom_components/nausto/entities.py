@@ -17,7 +17,7 @@ def snapshots(hass: HomeAssistant, selected: list[str] | None = None, previous: 
     for entry in registry.entities.values():
         if (wanted is not None and entry.id not in wanted) or entry.disabled_by is not None:
             continue
-        if entry.domain not in ("sensor", "binary_sensor"):
+        if entry.domain not in ("sensor", "binary_sensor", "counter"):
             continue
         state = hass.states.get(entry.entity_id)
         old = cached.get(entry.id, {})

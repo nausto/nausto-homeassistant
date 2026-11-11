@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 from datetime import timedelta
 import hashlib
+import secrets
 import time
 
 from homeassistant.core import callback
@@ -11,6 +12,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers import entity_registry, issue_registry
 
 from .client import Client
+from .control import ControlRuntime
 from .const import INTERVAL_SECONDS, MAX_ATTEMPTS
 from .entities import metadata, snapshots
 from .mapping import catalog, discovery, instant, kind, reading
@@ -42,6 +44,7 @@ class Runtime:
         self.writer = self.rescan_task = self.delivery_task = None
         self.delivery_wakeup = None
         self.next_scan = 0
+        self.actuation = ControlRuntime(hass, entry, store, self.db)
 
     async def db(self, function, *args):
         return await self.hass.async_add_executor_job(function, *args)
@@ -61,8 +64,7 @@ class Runtime:
         self.entry.async_on_unload(self.unsubscribe)
         self.poll()
         await self.tick()
-        if self.authorized and await self.db(self.store.has_urgent):
-            self.request_delivery()
+        await self.maintain_delivery()
         await self.health()
 
     async def refresh(self):
@@ -85,6 +87,10 @@ class Runtime:
             self.state_unsubscribe()
         self.state_unsubscribe = async_track_state_change_event(self.hass, [entity.entity_id for entity in values], self.state_changed)
         self.next_scan = clock() + 60_000
+        await self.actuation.refresh()
+        if len({source["id"] for source in offered["sources"] + self.actuation.offer["sources"]}) > 16:
+            self.actuation.by_id.clear()
+            raise ValueError("source_limit")
 
     @callback
     def registry_changed(self, _event):
@@ -166,10 +172,22 @@ class Runtime:
         self.delivery_task = self.entry.async_create_background_task(
             self.hass, self.deliver_changes(), "nausto-delivery")
 
+    async def maintain_delivery(self):
+        if self.stopped or not self.authorized:
+            return
+        urgent = bool(self.selected) and await self.db(self.store.has_urgent)
+        if urgent or await self.actuation.wants_nonce():
+            self.request_delivery()
+        elif self.delivery_wakeup is not None:
+            self.delivery_wakeup.cancel()
+            self.delivery_wakeup = None
+
     async def deliver_changes(self):
         try:
             await self.tick()
-            if self.stopped or not self.authorized or not self.selected or not await self.db(self.store.has_urgent):
+            if self.stopped or not self.authorized:
+                return
+            if not await self.actuation.wants_nonce() and (not self.selected or not await self.db(self.store.has_urgent)):
                 return
             control = await self.db(self.store.get, "control", {"attempts": 0, "retry_at": 0, "failure": None})
             if control["failure"] in ("unauthorized", "rejected", "attempts_exhausted"):
@@ -203,6 +221,7 @@ class Runtime:
                 await self.db(self.profiles.prune, clock())
             self.poll()
             await self.tick()
+            await self.maintain_delivery()
             await self.health()
         except Exception:
             self.local_failure = True
@@ -230,7 +249,7 @@ class Runtime:
             offered = await self.db(self.store.get, "offered")
             last_control = await self.db(self.store.get, "last_control", 0)
             dirty = bool(self.catalog["channels"]) and offered != self.revision
-            row = None
+            row, actuation_row = None, None
             if dirty:
                 message = encoded(discovery(self.catalog))
             elif not self.authorized or now - last_control >= 120_000:
@@ -238,20 +257,48 @@ class Runtime:
             else:
                 await self.db(self.store.seal_urgent, now)
                 row = await self.db(self.store.next, now)
-                if row is None:
-                    return
-                message = row["message"]
+                actuation_row = await self.actuation.next(row is not None)
+                if actuation_row is not None:
+                    row = None
+                    message = actuation_row["message"]
+                elif row is None:
+                    # Også en rolig kilde må hente kortlivede kommandoer ved neste
+                    # lovlige luke. Kømeldinger bærer samme nonce og beholder forrang.
+                    if not await self.actuation.wants_nonce():
+                        return
+                    message = encoded({"schema_version": 1, "action": "heartbeat"})
+                else:
+                    message = row["message"]
             await self.db(self.store.set, "last_request", now)
             if self.stopped:
                 return
-            result = await self.client.send(key, message)
+            nonce = secrets.token_hex(16) if await self.actuation.wants_nonce() else None
+            started = time.monotonic()
+            result = await self.client.send(key, message, nonce) if nonce else await self.client.send(key, message)
             if self.stopped or await self.db(self.store.get, "generation", 0) != self.generation:
+                return
+            elapsed = (time.monotonic() - started) * 1000
+            if result.ok and nonce is not None:
+                await self.actuation.receipt(result.data, nonce, elapsed, self.generation)
+            if result.ok and actuation_row is not None:
+                await self.actuation.accepted(actuation_row)
+                await self.db(self.store.set, "last_accepted", now)
+                await self.db(self.store.set, "control", {"attempts": 0, "retry_at": 0, "failure": None})
+                self.failure = None
+                await self.maintain_delivery()
                 return
             if result.ok and row is not None:
                 await self.db(self.store.accepted, row["id"])
                 await self.db(self.store.set, "last_accepted", now)
                 await self.db(self.store.set, "control", {"attempts": 0, "retry_at": 0, "failure": None})
                 self.failure = None
+                await self.db(self.store.set, "control_last_was_control", False)
+                return
+            if actuation_row is not None and result.status in (400, 403, 409, 413):
+                # Et additivt kontrollavslag får ikke stanse den etablerte målekanalen.
+                await self.db(self.store.set, "control_delivery_rejected", True)
+                await self.db(self.store.set, "control", {"attempts": 0, "retry_at": now + 30_000, "failure": None})
+                self.actuation.supported, self.local_failure = False, True
                 return
             ids = result.data.get("selected_channel_ids") if result.data else None
             try:
@@ -293,7 +340,7 @@ class Runtime:
         status = await self.db(self.store.status)
         discarded = await self.db(self.profiles.index.get, "discarded", 0)
         identifier = self.entry.entry_id
-        if self.local_failure or discarded or status["rejected_batches"] or status["gap_observations"] or status["control"]["failure"] in ("rejected", "attempts_exhausted"):
+        if self.local_failure or self.actuation.pending_gap or discarded or status["rejected_batches"] or status["gap_observations"] or status["control"]["failure"] in ("rejected", "attempts_exhausted") or await self.db(self.store.get, "control_delivery_rejected", False):
             issue_registry.async_create_issue(self.hass, "nausto", identifier, is_fixable=False,
                 severity=issue_registry.IssueSeverity.WARNING, translation_key="delivery")
         else:
@@ -310,6 +357,7 @@ class Runtime:
 
     async def async_stop(self):
         self.stopped = True
+        self.actuation.stopped = True
         if self.delivery_wakeup is not None:
             self.delivery_wakeup.cancel()
             self.delivery_wakeup = None
@@ -334,6 +382,7 @@ class Runtime:
             await asyncio.gather(self.delivery_task, return_exceptions=True)
         # En utestående kvittering må være ferdig før SQLite-forbindelsen lukkes.
         async with self.network:
+            await self.actuation.stop()
             if self.pending_gap:
                 await self.db(self.store.note_gap, self.pending_gap, clock())
                 self.pending_gap = 0

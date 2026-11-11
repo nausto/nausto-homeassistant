@@ -4,17 +4,20 @@
     "step": {
       "user": {
         "title": "Connect to Nausto",
-        "description": "Choose the entities for your boat. Open Boat → Sensors in Nausto, add a data source and paste its pairing code here. The code expires after ten minutes. Then return to Nausto to choose which sensors to follow and connect them to the right components.",
+        "description": "Choose the entities for your boat. Open Boat → Sensors in Nausto, add a data source and enter its eight-character code here, or paste a copied pairing code. Older codes still work. The code expires after ten minutes. Then return to Nausto to choose which sensors to follow and connect them to the right components. Control is off until you allow it here. Select only switches and lights belonging to the boat. Separately select ordinary circuits that are safe to turn off. Other circuits are protected against being turned off, and that protection cannot later be removed here.",
         "data": {
           "pairing_code": "Pairing code from Nausto",
-          "entities": "Entities for the boat"
+          "entities": "Entities for the boat",
+          "allow_control": "Allow control from Nausto",
+          "control_entities": "Switches and lights available for control",
+          "control_off_entities": "Ordinary circuits that may also be turned off"
         }
       }
     },
     "error": {
       "cannot_connect": "Could not reach Nausto. Check your internet connection and try again.",
       "pairing_failed": "This code could not be used. Create a new code in Nausto and try again.",
-      "invalid_code": "Paste the complete pairing code from Nausto.",
+      "invalid_code": "Enter the eight-character code from Nausto, or paste the complete copied pairing code.",
       "invalid_entities": "Choose up to 64 supported entities from the list.",
       "source_limit": "These entities use more than 16 sources. Choose fewer devices.",
       "wrong_boat": "This code belongs to a different connection. Create a code for the original data source in Nausto.",
@@ -22,7 +25,9 @@
       "instance_changed": "This connection belongs to another Home Assistant instance. Remove the old Nausto integrations here, then add Nausto again. History already received in Nausto is kept.",
       "pairing_limit": "Several setup attempts are in progress. Finish one or try again in ten minutes.",
       "connection_limit": "Five Nausto connections are already stored. Remove an unused connection first.",
-      "local_state": "Could not open local storage. Check the available storage and try again."
+      "local_state": "Could not open local storage. Check the available storage and try again.",
+      "invalid_controls": "Select up to 16 switches and lights. Only selected circuits without permanent protection may be allowed to turn off.",
+      "pairing_rate_limited": "Too many codes were tried from this network. Wait before trying again. Use the same code if it is still valid."
     },
     "abort": {
       "already_configured": "This Nausto connection is already configured.",
@@ -33,16 +38,20 @@
     "step": {
       "init": {
         "title": "Sensors for Nausto",
-        "description": "Choose the entities to offer to your boat. Open Sensors in Nausto to choose which ones to follow, assign components and select primary sources.",
+        "description": "Choose the entities to offer to your boat. Open Sensors in Nausto to choose which ones to follow, assign components and select primary sources. Control is off until you allow it here. Select only switches and lights belonging to the boat. Separately select ordinary circuits that are safe to turn off. Other circuits are protected against being turned off, and that protection cannot later be removed here.",
         "data": {
           "entities": "Entities for the boat",
-          "retry_failed": "Retry the connection"
+          "retry_failed": "Retry the connection",
+          "allow_control": "Allow control from Nausto",
+          "control_entities": "Switches and lights available for control",
+          "control_off_entities": "Ordinary circuits that may also be turned off"
         }
       }
     },
     "error": {
       "invalid_entities": "Choose up to 64 supported entities from the list.",
-      "source_limit": "These entities use more than 16 sources. Choose fewer devices."
+      "source_limit": "These entities use more than 16 sources. Choose fewer devices.",
+      "invalid_controls": "Select up to 16 switches and lights. Only selected circuits without permanent protection may be allowed to turn off."
     }
   },
   "exceptions": {

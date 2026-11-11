@@ -13,6 +13,18 @@ from .store import Store
 _ACTIVATION = RLock()
 
 
+def pairing_code(value: str) -> str | None:
+    """Samme Crockford32-normalisering som sensor-pairing.ts; gamle koder beholdes."""
+    if not isinstance(value, str) or len(value) > 2048:
+        return None
+    value = value.strip()
+    if re.fullmatch(r"nsp_[0-9a-f]{64}", value):
+        return value
+    short = value[4:] if value.startswith("nsc_") else value
+    short = re.sub(r"[ -]", "", short).upper().replace("O", "0").replace("I", "1").replace("L", "1")
+    return "nsc_" + short if re.fullmatch(r"[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{8}", short) else None
+
+
 def connection_id(value) -> str:
     if not isinstance(value, str):
         raise ValueError("wrong_connection")
@@ -52,7 +64,8 @@ class Profiles:
             self.index.set("evict", None)
 
     def prepare(self, code: str, now: int) -> str:
-        if not re.fullmatch(r"nsp_[0-9a-f]{64}", code):
+        code = pairing_code(code)
+        if code is None:
             raise ValueError("invalid_code")
         digest = hashlib.sha256(code.encode()).hexdigest()
         with self.index.transaction():

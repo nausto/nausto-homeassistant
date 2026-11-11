@@ -3,15 +3,16 @@
 import json
 import re
 
-from .profiles import connection_id
+from .profiles import connection_id, pairing_code
 
 
 def read_pairing(value: str, endpoint: str) -> tuple[str, str | None]:
     if not isinstance(value, str) or len(value) > 2048:
         raise ValueError("invalid_code")
     value = value.strip()
-    if re.fullmatch(r"nsp_[0-9a-f]{64}", value):
-        return value, None
+    normalized = pairing_code(value)
+    if normalized is not None:
+        return normalized, None
     try:
         data = json.loads(value)
         if (not isinstance(data, dict) or set(data) != {"kind", "version", "endpoint", "connection_id", "code"}

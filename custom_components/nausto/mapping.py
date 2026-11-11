@@ -39,7 +39,7 @@ def instant(value: Any) -> str | None:
         return None
 
 
-# Bare dokumenterte dimensjoner. Energi, trykk og volum krever egne kontraktstørrelser.
+# Dokumenterte dimensjoner konverteres til kontraktens SI-par, aldri fra entitetsnavnet.
 UNITS = {
     "V": ("voltage", "V", 1.0, 0.0),
     "mV": ("voltage", "V", 0.001, 0.0),
@@ -50,6 +50,29 @@ UNITS = {
     "C": ("charge", "C", 1.0, 0.0),
     "Ah": ("charge", "C", 3600.0, 0.0),
     "mAh": ("charge", "C", 3.6, 0.0),
+    "J": ("energy", "J", 1.0, 0.0),
+    "kJ": ("energy", "J", 1000.0, 0.0),
+    "MJ": ("energy", "J", 1_000_000.0, 0.0),
+    "Wh": ("energy", "J", 3600.0, 0.0),
+    "kWh": ("energy", "J", 3_600_000.0, 0.0),
+    "Pa": ("pressure", "Pa", 1.0, 0.0),
+    "hPa": ("pressure", "Pa", 100.0, 0.0),
+    "mbar": ("pressure", "Pa", 100.0, 0.0),
+    "kPa": ("pressure", "Pa", 1000.0, 0.0),
+    "bar": ("pressure", "Pa", 100_000.0, 0.0),
+    "psi": ("pressure", "Pa", 6894.757293168, 0.0),
+    "m3": ("volume", "m3", 1.0, 0.0),
+    "m³": ("volume", "m3", 1.0, 0.0),
+    "L": ("volume", "m3", .001, 0.0),
+    "mL": ("volume", "m3", .000001, 0.0),
+    "m3/s": ("volume_flow", "m3/s", 1.0, 0.0),
+    "m³/s": ("volume_flow", "m3/s", 1.0, 0.0),
+    "m³/h": ("volume_flow", "m3/s", 1.0 / 3600, 0.0),
+    "L/s": ("volume_flow", "m3/s", .001, 0.0),
+    "L/min": ("volume_flow", "m3/s", .001 / 60, 0.0),
+    "L/h": ("volume_flow", "m3/s", .001 / 3600, 0.0),
+    "m/s2": ("acceleration", "m/s2", 1.0, 0.0),
+    "m/s²": ("acceleration", "m/s2", 1.0, 0.0),
     "K": ("temperature", "K", 1.0, 0.0),
     "°C": ("temperature", "K", 1.0, 273.15),
     "°F": ("temperature", "K", 5.0 / 9.0, 273.15 - 32.0 * 5.0 / 9.0),
@@ -67,6 +90,9 @@ CLASSES = {
     "voltage": "voltage", "current": "current", "power": "power",
     "temperature": "temperature", "battery": "ratio", "humidity": "ratio",
     "speed": "speed", "wind_speed": "speed", "duration": "duration",
+    "energy": "energy", "pressure": "pressure", "atmospheric_pressure": "pressure",
+    "volume": "volume", "volume_storage": "volume", "water": "volume", "gas": "volume",
+    "volume_flow_rate": "volume_flow",
 }
 ALARMS = {"moisture", "smoke", "gas", "carbon_monoxide", "problem", "safety", "tamper", "heat", "battery"}
 
@@ -82,6 +108,8 @@ def kind(entity: Entity) -> tuple[str, str, str] | None:
     domain = entity.entity_id.partition(".")[0]
     if domain == "binary_sensor":
         return ("alarm" if entity.device_class in ALARMS else "state", "none", "derived")
+    if domain == "counter" and entity.device_class is None and entity.unit in (None, "1"):
+        return "count", "1", "derived"
     if domain != "sensor":
         return None
     if entity.device_class == "enum":
@@ -90,6 +118,9 @@ def kind(entity: Entity) -> tuple[str, str, str] | None:
     if unit is None:
         return None
     quantity, canonical, _, _ = unit
+    # Energi vises foreløpig som kumulativ teller. Lagret energi krever egen semantikk.
+    if quantity == "energy" and entity.device_class != "energy":
+        return None
     expected = CLASSES.get(entity.device_class or "")
     # En ukjent eller motstridende device_class får ingen navnebasert gjetning.
     if entity.device_class and expected != quantity:
@@ -157,6 +188,10 @@ def reading(entity: Entity, channel: dict) -> dict | None:
         conversion = UNITS.get(entity.unit or "")
         try:
             number = float(entity.state)
+            if channel["quantity"] == "count" and entity.entity_id.partition(".")[0] == "counter":
+                if not math.isfinite(number) or not number.is_integer() or number < 0:
+                    raise ValueError("unknown_count")
+                conversion = ("count", "1", 1.0, 0.0)
             if conversion is None or conversion[0] != channel["quantity"] or not math.isfinite(number):
                 raise ValueError("unknown_unit")
             value = number * conversion[2] + conversion[3]

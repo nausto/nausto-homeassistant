@@ -235,6 +235,7 @@ class Store:
         with self.transaction():
             self.db.execute("update batches set attempts=0,retry_at=0,rejected=null")
             self.set("control", {"attempts": 0, "retry_at": 0, "failure": None})
+            self.set("control_delivery_rejected", False)
 
     def note_gap(self, count: int, now: int):
         if count > 0:

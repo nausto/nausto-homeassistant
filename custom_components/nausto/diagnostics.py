@@ -13,5 +13,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
         "local_failure": runtime.local_failure,
         "delivery_failure": runtime.failure,
         "discarded_profile_observations": await hass.async_add_executor_job(runtime.profiles.index.get, "discarded", 0),
+        "remote_control": {"enabled": runtime.actuation.enabled, "protocol_supported": runtime.actuation.supported,
+                           **await hass.async_add_executor_job(runtime.actuation.storage.status)},
         **counters,
     }
