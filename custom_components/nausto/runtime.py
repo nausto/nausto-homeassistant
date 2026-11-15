@@ -13,7 +13,7 @@ from homeassistant.helpers import entity_registry, issue_registry
 
 from .client import Client
 from .control import ControlRuntime
-from .const import INTERVAL_SECONDS, MAX_ATTEMPTS
+from .const import INTERVAL_SECONDS, MAX_ATTEMPTS, REQUEST_INTERVAL_MS
 from .entities import metadata, snapshots
 from .mapping import catalog, discovery, instant, kind, reading
 from .store import encoded
@@ -193,9 +193,9 @@ class Runtime:
             if control["failure"] in ("unauthorized", "rejected", "attempts_exhausted"):
                 return
             last = await self.db(self.store.get, "last_request", 0)
-            due = max(last + 30_000, control["retry_at"])
-            # Et hendelsesutløst kall følger ikke nødvendigvis periodikkens 30-sekundersfase.
-            # En egen, koalescert vekking treffer neste lovlige luke uten å vente på neste poll.
+            due = max(last + REQUEST_INTERVAL_MS, control["retry_at"])
+            # Et hendelsesutløst kall følger ikke nødvendigvis den faste rundens fase. En egen,
+            # koalescert vekking treffer neste lovlige luke uten å vente på neste runde.
             if not self.stopped:
                 self.delivery_wakeup = self.hass.loop.call_later(
                     max(.1, (due - clock()) / 1000), self.wake_delivery)
@@ -244,7 +244,7 @@ class Runtime:
             if control["failure"] in ("rejected", "attempts_exhausted"):
                 return
             last = await self.db(self.store.get, "last_request", 0)
-            if now - last < 30_000 or now < control["retry_at"] or control["attempts"] >= MAX_ATTEMPTS:
+            if now - last < REQUEST_INTERVAL_MS or now < control["retry_at"] or control["attempts"] >= MAX_ATTEMPTS:
                 return
             offered = await self.db(self.store.get, "offered")
             last_control = await self.db(self.store.get, "last_control", 0)

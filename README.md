@@ -77,7 +77,7 @@ kvalitetsoverganger lagres straks og vekker en egen sender uten å blokkere oppt
 Første verdi beholder minuttvinduet. Et vindu med overganger kan sendes før minuttet ved første
 tillatte batchforsøk; overgangene samles varig mens senderen venter. Kø, delingskontroll,
 nettfeil og backoff kan utsette levering. Samme forseglete bytes og måle-ID-er brukes ved
-gjentatt sending og omstart. Sending begrenses til én forespørsel per 30 sekunder, med
+gjentatt sending og omstart. Sending begrenses til én forespørsel per 31 sekunder, med
 eksponentiell venting og respekt for serverens `Retry-After` (maksimalt én time).
 
 Profilen rommer høyst 10 000 observasjoner og 10 MiB, inkludert åpent opptak og kontrollsporet.
@@ -99,21 +99,30 @@ Fjern de gamle Nausto-integrasjonene i HA og legg til på nytt. Når siste integ
 slettes de lokale profilene og nøklene; allerede mottatt historikk i Nausto beholdes.
 
 Utgående trafikk går bare til Naustos HTTPS-mottak. Tilkoblingsnøkkelen er bundet til én båt og
-gir skriveadgang for valgte sensorer. Lokal styring krever de egne tillatelsene nedenfor.
+gir skriveadgang for valgte sensorer. Styring av brytere og lys står nedenfor.
 
 ## Styring av brytere og lys
 
-Styring er avslått som standard, også ved oppgradering. I **Konfigurer** må den fysiske eieren
-slå på **Tillat styring fra Nausto** og velge konkrete registerførte brytere og lys. Det er
-høyst 16 kontroller og fortsatt høyst 16 kilder totalt per tilkobling. En ren bryter trenger
-ingen kunstig sensorverdi. Deretter kreves båtens eiervalg og sikkerhetsklassifisering i Nausto.
+Brytere og lys på samme enhet som en delt sensor kan slås av og på fra Nausto med en gang. Andre
+brytere og lys velger du i samme liste som sensorene. Det finnes ingen egen lov om bord, og eieren
+aktiverer ingenting i Nausto. Innstillinger, diagnostikk og skjulte entiteter på enheten følger ikke
+med av seg selv. Det er høyst 16 kretser, de valgte først, og fortsatt høyst 16 kilder totalt per
+tilkobling. En ren bryter trenger ingen kunstig sensorverdi.
 
-Velg separat **Vanlige kretser som også kan slås av** bare for kretser som trygt kan slås av.
-Alle andre beskytter mot avslåing. Når en krets først har fått denne lokale beskyttelsen,
-beholdes den gjennom alternativer, ny autentisering og omstart; appen kan ikke senke den.
-Navn brukes ikke til å gjette om en krets er kritisk. Lokal deaktivering eller fravalg gjelder
-også mens en nettforespørsel venter. Bare registrerte `switch`/`light` og deres konkrete
-`turn_on`/`turn_off` støttes. Dimming bruker HAs 255 trinn, med minste positive nivå 1/255.
+En krets med lensepumpe eller alarm i navnet, entitets-ID-en eller enhetens navn (`lens`, `läns`,
+`læns`, `bilge`, `alarm`) kan slås på, men aldri av. Det kontrolleres både her og i Nausto, og
+beskyttelsen beholdes gjennom nytt navn, alternativer, ny autentisering og omstart; appen kan ikke
+senke den. Det samme gjelder kretser som
+var beskyttet i 0.3.0. Kretsene 0.3.0 tillot, kan fortsatt styres og står valgt i lista til
+oppsettet lagres på nytt. Fravalg gjelder også mens en nettforespørsel venter. Bare registrerte
+`switch`/`light` og deres konkrete `turn_on`/`turn_off` støttes. Dimming bruker HAs 255 trinn, med
+minste positive nivå 1/255.
+
+En bryter eller et lys med ankerspill, vinsj eller propell i navnet, entitets-ID-en eller enhetens
+navn (som `ankerspill`, `windlass`, `vinsj`, `winch`, `propell` og `thruster`, også i sammensatte
+ord) står ikke i lista og tilbys eller styres aldri, heller ikke om 0.3.0 tillot den. Nausto vet
+ikke om noen er om bord når slikt utstyr starter. Anker alene teller ikke, så ankerlyset kan styres.
+Navnene leses på nytt rett før hvert kall.
 
 Kommandoer kommer i allerede autoriserte HTTP-svar og deler målingenes fartsgrense og
 `Retry-After`. Hvert forsøk har en ny tilfeldig forespørselsverdi som serveren må bekrefte.
@@ -160,7 +169,7 @@ renames. Numeric readings use a deadband and a two-minute source-report interval
 limited to once per minute. Re-reading an unchanged report never creates a fresh reading.
 Actual state/alarm and quality transitions are saved immediately and wake a separate sender.
 The first value remains a baseline in the minute window. Transition windows can be sent before
-that minute at the next permitted batch attempt, with at least 30 seconds between requests.
+that minute at the next permitted batch attempt, with at least 31 seconds between requests.
 Transitions coalesce durably while waiting. Selection checks, queued batches, network failures
 and server `Retry-After` still apply; sealed retries keep identical bytes and timestamps.
 Source state-change time and source report confirmation remain separate; a gateway
@@ -171,16 +180,25 @@ never credentials or sensor data. Use **Configure** to change sharing or retry r
 Unselecting a channel in Nausto also reconciles queued captures at the next selection check.
 Sealed batches remain immutable; discarded captures count as gaps, while other sensors continue.
 
-Control is off by default. Explicitly select registered switches/lights locally, and separately
-identify ordinary circuits that may safely be turned off; all others remain protected. Once
-local protection is set it cannot be lowered by options, reauthentication, restart or the app.
-Boat-owner authorization is also required in Nausto. Commands use fresh nonce-bound HTTP
+Switches and lights on the same device as a shared sensor can be turned on and off from Nausto right
+away; choose other switches and lights in the same list as the sensors. There is no separate local
+consent and nothing to activate in Nausto. Settings, diagnostic and hidden entities on the device do
+not come along by themselves. At most 16 circuits are offered, chosen ones first. A circuit with
+bilge pump or alarm in its name, entity ID or device name (`lens`, `läns`, `læns`, `bilge`, `alarm`)
+can be turned on but never off, checked both here and in Nausto. That protection, and any
+protection set in 0.3.0, survives renames, options, reauthentication and restarts. Circuits allowed in 0.3.0 remain
+controllable and stay selected until the setup is saved again. A switch or light with windlass,
+winch, propeller or thruster in its name, entity ID or device name (such as `ankerspill`,
+`windlass`, `vinsj`, `winch`, `propell` or `thruster`, also inside compound words) is not listed and
+is never offered or switched, even if 0.3.0 allowed it, because Nausto cannot tell whether anyone is
+on board. `anchor` alone does not count, so an anchor light can still be switched. Commands use
+fresh nonce-bound HTTP
 responses, the existing global rate/backoff limits and a monotonic lease that includes the full
 round trip and local delays. A durable attempt is required before one concrete HA service call;
-restart or a lost response never repeats the physical action. Acknowledgement is separate from
-a later good source event. Control reserves 64 KiB and 32 state reports within the same total
-profile budget, with at most 128 attempt markers and no state history. Permanent control-message
-rejection stops only control until explicit retry; unauthorized credentials stop the connection.
+restart or a lost response never repeats the physical action. Acknowledgement is separate from a
+later good source event. Control reserves 64 KiB and 32 state reports within the same total profile
+budget, with at most 128 attempt markers and no state history. Permanent control-message rejection
+stops only control until explicit retry; unauthorized credentials stop the connection.
 
 Copyright Nausto. Alle rettigheter forbeholdt. Offentlig kildekode gir ikke i seg selv en
 lisens til annen bruk eller til Naustos merkevare.

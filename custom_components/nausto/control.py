@@ -17,6 +17,15 @@ from .store import encoded, measurement_id, milliseconds, stamp
 COMMAND_KEYS = {"id", "actuator_id", "source_id", "external_id", "actuator_version", "kind", "level_steps", "critical", "requested_at", "expires_at", "target"}
 DIM_MODES = {"brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white"}
 MAX_ATTEMPTS = 128
+MAX_CONTROLS = 16
+SENSOR_DOMAINS = ("sensor", "binary_sensor", "counter")
+# Samme regel som boat_private.sensor_actuator_protected_name (ADR 310). Kretsen beskyttes også
+# her, så en feil eller et angrep på serveren aldri slår av en lensepumpe eller en alarm.
+PROTECTED_NAME = re.compile(r"alarm|bilge|lensepump|länspump|lænsepump|\b(lens|läns|læns)")
+# Samme regel som isNeverOfferedCircuitName i Signal K-pluginens control.ts. Et ankerspill, en vinsj
+# eller en propell som starter fjernstyrt, kan skade noen om bord, så adapteren tilbyr dem aldri og
+# styrer dem aldri. Anker alene gjør det ikke, så ankerlyset kan styres.
+NEVER_NAME = re.compile(r"ank[ae]r[\s_.-]?sp[ei]l|windlass|capstan|vinsj|vinsch|winch|propel|thruster")
 
 
 def _uuid(value):
@@ -81,6 +90,14 @@ def read_commands(data, nonce, elapsed_ms):
     return result
 
 
+def protected_name(*values):
+    return any(PROTECTED_NAME.search((value or "").lower()) is not None for value in values)
+
+
+def never_offered(*values):
+    return any(NEVER_NAME.search((value or "").lower()) is not None for value in values)
+
+
 @dataclass(frozen=True)
 class ControlEntity:
     registry_id: str
@@ -90,6 +107,8 @@ class ControlEntity:
     device_name: str
     kind: str
     steps: int | None
+    # Innstillinger, diagnostikk og skjulte entiteter følger ikke enheten av seg selv.
+    auxiliary: bool = False
 
 
 def candidates(hass):
@@ -107,14 +126,44 @@ def candidates(hass):
         modes = state.attributes.get("supported_color_modes", [])
         dimmer = entry.domain == "light" and isinstance(modes, (list, tuple, set)) and bool(DIM_MODES.intersection(modes))
         device = devices.async_get(entry.device_id) if entry.device_id else None
-        result[entry.id] = ControlEntity(entry.id, entry.entity_id, entry.device_id,
+        entity = ControlEntity(entry.id, entry.entity_id, entry.device_id,
             label(entry.name or entry.original_name or state.name),
             label(device.name_by_user or device.name or "") if device else "",
-            "dimmer" if dimmer else "switch", 255 if dimmer else None)
+            "dimmer" if dimmer else "switch", 255 if dimmer else None,
+            getattr(entry, "entity_category", None) is not None or getattr(entry, "hidden_by", None) is not None)
+        # Ankerspill, vinsj og propell står verken i lista, i tilbudet eller blant kretsene en
+        # kommando kan gjelde, som leses på nytt rett før hvert kall.
+        if not never_offered(entity.name, entity.entity_id, entity.device_name):
+            result[entry.id] = entity
     return result
 
 
-def control_catalog(connection, instance, entities, allowed_off, latches):
+def shared_devices(hass, selected):
+    """Enhetene til de delte sensorene; registeroppslaget skjer ved hver lesing."""
+    from homeassistant.helpers import entity_registry
+    registry = entity_registry.async_get(hass)
+    found = (registry.async_get(value) for value in selected)
+    return {entry.device_id for entry in found if entry is not None and entry.device_id and entry.domain in SENSOR_DOMAINS}
+
+
+def legacy_controls(entry):
+    """Kretsene 0.3.0 tillot om bord, til eieren lagrer oppsettet i en ny versjon (ADR 310)."""
+    values = entry.options if entry.options else entry.data
+    chosen = values.get("control_entities", []) if values.get("allow_control") is True else []
+    return [value for value in chosen if isinstance(value, str)] if isinstance(chosen, list) else []
+
+
+def controllable(available, selected, devices):
+    """Brytere og lys som er valgt i lista, og de vanlige på samme enhet som en delt sensor.
+
+    De valgte kommer først, så de andre etter fast register-ID, høyst 16 (ADR 310)."""
+    chosen = sorted((entity for key, entity in available.items() if key in selected), key=lambda value: value.registry_id)
+    rest = sorted((entity for key, entity in available.items()
+                   if key not in selected and entity.device_id in devices and not entity.auxiliary), key=lambda value: value.registry_id)
+    return {entity.registry_id: entity for entity in (chosen + rest)[:MAX_CONTROLS]}
+
+
+def control_catalog(connection, instance, entities, latches):
     sources, actuators = {}, []
     namespace = UUID(connection)
     updated = dict(latches)
@@ -123,14 +172,16 @@ def control_catalog(connection, instance, entities, allowed_off, latches):
         source_id = str(uuid5(namespace, "source:" + external))
         sources[source_id] = {"id": source_id, "external_id": external, "name": entity.device_name or "Home Assistant", "vendor": "Home Assistant"}
         actuator_external = f"entity:{entity.registry_id}:control:{entity.kind}:{entity.steps}"
-        protected = latches.get(entity.registry_id) is True or entity.registry_id not in allowed_off
+        # Navnet, entitets-ID-en og enhetens navn, slik eieren ser kretsen i Home Assistant. En
+        # beskyttelse fra 0.3.0 eller fra et av dem står gjennom nytt navn og nye valg.
+        protected = latches.get(entity.registry_id) is True or protected_name(entity.name, entity.entity_id, entity.device_name)
         updated[entity.registry_id] = protected
         actuators.append({"id": str(uuid5(namespace, f"actuator:{source_id}:{actuator_external}")),
             "source_id": source_id, "external_id": actuator_external, "name": entity.name,
             "kind": entity.kind, "level_steps": entity.steps, "protected": protected})
-    if len(sources) > 16 or len(actuators) > 16:
+    if len(sources) > 16 or len(actuators) > MAX_CONTROLS:
         raise ValueError("control_limit")
-    return {"schema_version": 1, "action": "control_offer", "enabled": True,
+    return {"schema_version": 1, "action": "control_offer", "enabled": bool(actuators),
             "sources": list(sources.values()), "actuators": actuators}, updated
 
 
@@ -296,10 +347,16 @@ class ControlRuntime:
 
     @property
     def enabled(self):
-        return self.option("allow_control", False) is True
+        # Ingen lov om bord: kilden tilbyr styring så lenge den har en krets å tilby (ADR 310).
+        return bool(self.entities)
 
     def option(self, key, default):
         return self.entry.options.get(key, self.entry.data.get(key, default))
+
+    def offered(self, available):
+        """Kretsene etter oppsettet slik det står nå, også mens et nytt oppsett lastes."""
+        selected = set(self.option("entities", [])) | set(legacy_controls(self.entry))
+        return controllable(available, selected, shared_devices(self.hass, selected))
 
     async def wants_nonce(self):
         return self.enabled or await self.db(self.store.get, "control_was_enabled", False)
@@ -308,15 +365,13 @@ class ControlRuntime:
         for remove in self.listeners:
             remove()
         self.listeners.clear()
-        ids = self.option("control_entities", []) if self.enabled else []
-        available = candidates(self.hass) if ids else {}
         previous = self.entities
-        self.entities = {key: available[key] for key in ids if key in available}
+        self.entities = self.offered(candidates(self.hass))
         if self.enabled:
             from homeassistant.helpers.event import async_track_state_change_event, async_track_state_report_event
             latches = await self.db(self.store.get, "control_protected", {})
             self.offer, latches = control_catalog(self.entry.data["connection_id"], self.entry.data["instance_id"],
-                list(self.entities.values()), self.option("control_off_entities", []), latches)
+                list(self.entities.values()), latches)
             await self.db(self.storage.configure, self.offer, latches)
             self.by_id = {actuator["id"]: (actuator, entity) for actuator, entity in zip(self.offer["actuators"], sorted(self.entities.values(), key=lambda value: value.registry_id))}
             paths = [entity.entity_id for entity in self.entities.values()]
@@ -433,18 +488,19 @@ class ControlRuntime:
                 reason = "local_disabled"
             elif found is None or found[1].registry_id not in current or current[found[1].registry_id] != found[1]:
                 reason = "unsupported"
-            elif found[1].registry_id not in self.option("control_entities", []):
+            elif found[1].registry_id not in self.entities or found[1].registry_id not in self.offered(current):
+                # Et nytt oppsett eller fravalg gjelder straks, også før integrasjonen lastes på nytt.
                 reason = "local_disabled"
             elif any(command[key] != found[0][key] for key in ("source_id", "external_id", "kind", "level_steps")):
                 reason = "unsupported"
-            elif (command["critical"] or found[0]["protected"] or found[1].registry_id not in self.option("control_off_entities", [])) and not command["target"]["on"]:
+            elif (command["critical"] or found[0]["protected"]) and not command["target"]["on"]:
                 reason = "provider_rejected"
             elif time.monotonic() >= deadline:
                 reason = "expired"
             if reason:
                 await self.db(self.storage.finish, command["id"], attempt, "rejected", reason)
                 continue
-            # Samtykke og monoton levetid kontrolleres igjen umiddelbart før ett konkret HA-kall.
+            # Stopp og monoton levetid kontrolleres igjen umiddelbart før ett konkret HA-kall.
             if self.stopped or not self.enabled or time.monotonic() >= deadline:
                 await self.db(self.storage.finish, command["id"], attempt, "rejected", "local_disabled" if self.stopped or not self.enabled else "expired")
                 continue

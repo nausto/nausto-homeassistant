@@ -4,13 +4,10 @@
     "step": {
       "user": {
         "title": "Koble til Nausto",
-        "description": "Velg entitetene som gjelder båten. Opprett en datakilde under Båten → Sensorer i Nausto og skriv koden med åtte tegn her, eller lim inn en kopiert paringskode. Eldre koder virker fortsatt. Koden gjelder i ti minutter. Etter tilkoblingen velger du hva Nausto skal følge og hvilken komponent hver sensor tilhører. Styring er avslått til du tillater den her. Velg bare brytere og lys som tilhører båten. Merk særskilt vanlige kretser som trygt kan slås av. Andre kretser beskyttes mot avslåing, og denne beskyttelsen kan ikke senere fjernes her.",
+        "description": "Velg entitetene som gjelder båten. Opprett en datakilde under Båten → Sensorer i Nausto og skriv koden med åtte tegn her, eller lim inn en kopiert paringskode. Eldre koder virker fortsatt. Koden gjelder i ti minutter. Etter tilkoblingen velger du hva Nausto skal følge og hvilken komponent hver sensor tilhører. Brytere og lys på samme enhet som en delt sensor kan slås av og på fra Nausto. Andre brytere og lys velger du i samme liste. Nausto slår aldri av en krets med lensepumpe eller alarm i navnet. En krets med ankerspill, vinsj eller propell i navnet står ikke i lista og styres aldri fra Nausto.",
         "data": {
           "pairing_code": "Paringskode fra Nausto",
-          "entities": "Entiteter til båten",
-          "allow_control": "Tillat styring fra Nausto",
-          "control_entities": "Brytere og lys som kan styres",
-          "control_off_entities": "Vanlige kretser som også kan slås av"
+          "entities": "Sensorer, brytere og lys til båten"
         }
       }
     },
@@ -26,7 +23,7 @@
       "pairing_limit": "Flere oppsett er allerede startet. Fullfør ett av dem eller prøv igjen om ti minutter.",
       "connection_limit": "Fem Nausto-tilkoblinger er allerede lagret. Fjern en ubrukt tilkobling først.",
       "local_state": "Lokal lagring kunne ikke åpnes. Kontroller lagringsplassen og prøv igjen.",
-      "invalid_controls": "Velg høyst 16 brytere og lys. Bare valgte kretser uten varig beskyttelse kan tillates avslått.",
+      "invalid_controls": "Velg høyst 16 brytere og lys.",
       "pairing_rate_limited": "Det er prøvd for mange koder fra dette nettet. Vent litt før du prøver igjen. Bruk samme kode hvis den fortsatt gjelder."
     },
     "abort": {
@@ -38,20 +35,17 @@
     "step": {
       "init": {
         "title": "Sensorer til Nausto",
-        "description": "Velg entitetene som skal tilbys båten. Du velger hva som følges, tilhørighet og primærkilde under Sensorer i Nausto. Styring er avslått til du tillater den her. Velg bare brytere og lys som tilhører båten. Merk særskilt vanlige kretser som trygt kan slås av. Andre kretser beskyttes mot avslåing, og denne beskyttelsen kan ikke senere fjernes her.",
+        "description": "Velg entitetene som skal tilbys båten. Du velger hva som følges, tilhørighet og primærkilde under Sensorer i Nausto. Brytere og lys på samme enhet som en delt sensor kan slås av og på fra Nausto. Andre brytere og lys velger du i samme liste. Nausto slår aldri av en krets med lensepumpe eller alarm i navnet. En krets med ankerspill, vinsj eller propell i navnet står ikke i lista og styres aldri fra Nausto.",
         "data": {
-          "entities": "Entiteter til båten",
-          "retry_failed": "Prøv tilkoblingen på nytt",
-          "allow_control": "Tillat styring fra Nausto",
-          "control_entities": "Brytere og lys som kan styres",
-          "control_off_entities": "Vanlige kretser som også kan slås av"
+          "entities": "Sensorer, brytere og lys til båten",
+          "retry_failed": "Prøv tilkoblingen på nytt"
         }
       }
     },
     "error": {
       "invalid_entities": "Velg høyst 64 støttede entiteter fra listen.",
       "source_limit": "Entitetene kommer fra flere enn 16 kilder. Velg færre enheter.",
-      "invalid_controls": "Velg høyst 16 brytere og lys. Bare valgte kretser uten varig beskyttelse kan tillates avslått."
+      "invalid_controls": "Velg høyst 16 brytere og lys."
     }
   },
   "exceptions": {

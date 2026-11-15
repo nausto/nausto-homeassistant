@@ -4,13 +4,10 @@
     "step": {
       "user": {
         "title": "Connect to Nausto",
-        "description": "Choose the entities for your boat. Open Boat → Sensors in Nausto, add a data source and enter its eight-character code here, or paste a copied pairing code. Older codes still work. The code expires after ten minutes. Then return to Nausto to choose which sensors to follow and connect them to the right components. Control is off until you allow it here. Select only switches and lights belonging to the boat. Separately select ordinary circuits that are safe to turn off. Other circuits are protected against being turned off, and that protection cannot later be removed here.",
+        "description": "Choose the entities for your boat. Open Boat → Sensors in Nausto, add a data source and enter its eight-character code here, or paste a copied pairing code. Older codes still work. The code expires after ten minutes. Then return to Nausto to choose which sensors to follow and connect them to the right components. Switches and lights on the same device as a shared sensor can be turned on and off from Nausto. Choose other switches and lights in the same list. Nausto never turns off a circuit with bilge pump or alarm in its name. A circuit with windlass, winch, propeller or thruster in its name is not listed and is never switched from Nausto.",
         "data": {
           "pairing_code": "Pairing code from Nausto",
-          "entities": "Entities for the boat",
-          "allow_control": "Allow control from Nausto",
-          "control_entities": "Switches and lights available for control",
-          "control_off_entities": "Ordinary circuits that may also be turned off"
+          "entities": "Sensors, switches and lights for the boat"
         }
       }
     },
@@ -26,7 +23,7 @@
       "pairing_limit": "Several setup attempts are in progress. Finish one or try again in ten minutes.",
       "connection_limit": "Five Nausto connections are already stored. Remove an unused connection first.",
       "local_state": "Could not open local storage. Check the available storage and try again.",
-      "invalid_controls": "Select up to 16 switches and lights. Only selected circuits without permanent protection may be allowed to turn off.",
+      "invalid_controls": "Select up to 16 switches and lights.",
       "pairing_rate_limited": "Too many codes were tried from this network. Wait before trying again. Use the same code if it is still valid."
     },
     "abort": {
@@ -38,20 +35,17 @@
     "step": {
       "init": {
         "title": "Sensors for Nausto",
-        "description": "Choose the entities to offer to your boat. Open Sensors in Nausto to choose which ones to follow, assign components and select primary sources. Control is off until you allow it here. Select only switches and lights belonging to the boat. Separately select ordinary circuits that are safe to turn off. Other circuits are protected against being turned off, and that protection cannot later be removed here.",
+        "description": "Choose the entities to offer to your boat. Open Sensors in Nausto to choose which ones to follow, assign components and select primary sources. Switches and lights on the same device as a shared sensor can be turned on and off from Nausto. Choose other switches and lights in the same list. Nausto never turns off a circuit with bilge pump or alarm in its name. A circuit with windlass, winch, propeller or thruster in its name is not listed and is never switched from Nausto.",
         "data": {
-          "entities": "Entities for the boat",
-          "retry_failed": "Retry the connection",
-          "allow_control": "Allow control from Nausto",
-          "control_entities": "Switches and lights available for control",
-          "control_off_entities": "Ordinary circuits that may also be turned off"
+          "entities": "Sensors, switches and lights for the boat",
+          "retry_failed": "Retry the connection"
         }
       }
     },
     "error": {
       "invalid_entities": "Choose up to 64 supported entities from the list.",
       "source_limit": "These entities use more than 16 sources. Choose fewer devices.",
-      "invalid_controls": "Select up to 16 switches and lights. Only selected circuits without permanent protection may be allowed to turn off."
+      "invalid_controls": "Select up to 16 switches and lights."
     }
   },
   "exceptions": {
