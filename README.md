@@ -77,8 +77,9 @@ kvalitetsoverganger lagres straks og vekker en egen sender uten å blokkere oppt
 Første verdi beholder minuttvinduet. Et vindu med overganger kan sendes før minuttet ved første
 tillatte batchforsøk; overgangene samles varig mens senderen venter. Kø, delingskontroll,
 nettfeil og backoff kan utsette levering. Samme forseglete bytes og måle-ID-er brukes ved
-gjentatt sending og omstart. Sending begrenses til én forespørsel per 31 sekunder, med
-eksponentiell venting og respekt for serverens `Retry-After` (maksimalt én time).
+gjentatt sending og omstart. Den vanlige veien begrenses til én forespørsel per 31 sekunder, med
+eksponentiell venting og respekt for serverens `Retry-After` (maksimalt én time). En ny verdi på en
+av/på- eller alarmkanal kan i tillegg gå straks på alarmsporet, beskrevet nedenfor.
 
 Profilen rommer høyst 10 000 observasjoner og 10 MiB, inkludert åpent opptak og kontrollsporet.
 Målekøen beholder opptak i høyst sju dager. Det åpne målevinduet har 100 observasjoner / 64 KiB;
@@ -87,8 +88,9 @@ kontrollsporet har 32 tilstandspunkter / 64 KiB. Dermed har forseglede målebatc
 Gamle eller overskytende batcher kasseres hele og telles som datagap. Etter tolv mislykkede
 forsøk beholdes opptaket som avvist. **Konfigurer → Prøv tilkoblingen på nytt** åpner for
 nye forsøk. Home Assistant viser et reparasjonsvarsel ved permanente avvisninger eller tap.
-Last ned integrasjonens **diagnostikk** for køtellere, gap og feiltype. Diagnostikken har ingen
-paringskode, produsentnøkkel, entitetsnavn, verdier eller private nettadresser.
+Last ned integrasjonens **diagnostikk** for køtellere, gap, feiltype, om sporene og
+liveforbindelsen er i bruk og om livevisningen strømmer, med egne tellere. Diagnostikken har ingen
+paringskode, produsentnøkkel, livebillett, entitetsnavn, verdier eller private nettadresser.
 
 Hvis HA er avslått, integrasjonen er deaktivert eller hendelseskøen er full, kan målinger gå
 tapt. Historikk rekonstrueres ikke fra HAs Recorder. Ved oppstart brukes bare en faktisk
@@ -98,8 +100,10 @@ En gjenoppretting med endret HA-instans-ID krever et nytt oppsett og gjenbruker 
 Fjern de gamle Nausto-integrasjonene i HA og legg til på nytt. Når siste integrasjon fjernes,
 slettes de lokale profilene og nøklene; allerede mottatt historikk i Nausto beholdes.
 
-Utgående trafikk går bare til Naustos HTTPS-mottak. Tilkoblingsnøkkelen er bundet til én båt og
-gir skriveadgang for valgte sensorer. Styring av brytere og lys står nedenfor.
+Utgående trafikk går bare til Naustos HTTPS-mottak og til liveforbindelsen på
+`wss://nausto.no/integrasjoner/sensors/live`, som bærer vekking og, mens noen ser på båten i Nausto,
+en kopi av målingene. Tilkoblingsnøkkelen er bundet til én båt og gir skriveadgang for valgte
+sensorer. Styring av brytere og lys står nedenfor.
 
 ## Styring av brytere og lys
 
@@ -124,8 +128,9 @@ ord) står ikke i lista og tilbys eller styres aldri, heller ikke om 0.3.0 tillo
 ikke om noen er om bord når slikt utstyr starter. Anker alene teller ikke, så ankerlyset kan styres.
 Navnene leses på nytt rett før hvert kall.
 
-Kommandoer kommer i allerede autoriserte HTTP-svar og deler målingenes fartsgrense og
-`Retry-After`. Hvert forsøk har en ny tilfeldig forespørselsverdi som serveren må bekrefte.
+Kommandoer kommer bare i allerede autoriserte HTTPS-svar, aldri over liveforbindelsen, enten den
+vanlige veien med målingenes fartsgrense og `Retry-After` eller styringssporet beskrevet nedenfor.
+Hvert forsøk har en ny tilfeldig forespørselsverdi som serveren må bekrefte.
 Hele HTTP-rundturen og lokal venting trekkes fra en monoton levetid på høyst 60 sekunder.
 Før tjenestekallet må et uforanderlig forsøk være lagret atomisk. Etter restart eller tapt svar
 utføres samme kommando aldri igjen; resultatet kan sendes på nytt med identiske bytes.
@@ -143,6 +148,55 @@ Et permanent avslag på kontrollmeldinger stanser kontrollsporet med reparasjons
 Målinger fortsetter. **Prøv tilkoblingen på nytt** åpner kontrollsporet igjen. Feil ved nøkkelen
 stopper hele tilkoblingen og krever ny autentisering. Eldre backend uten kontrollstøtte får
 bare de eksisterende målemeldingene.
+
+## Rask styring og alarmoverganger
+
+Når Nausto støtter det, har integrasjonen to prioriterte spor til det samme HTTPS-mottaket, ved
+siden av den vanlige veien. Styringssporet henter en ventende kommando straks Nausto vekker
+integrasjonen, og sender kvitteringen og kretsens kilderapporter i ett minutt etter en utført
+kommando.
+Alarmsporet sender straks vinduet med en ny verdi på en av/på- eller alarmkanal. Tall, endret
+tilgjengelighet, første verdi og tilbudet av kretser følger den vanlige takten. Sporene bruker høyst
+100 og 50 forespørsler i en rullerende time og venter ikke på den vanlige veiens 31 sekunder.
+Avslår Nausto en forespørsel på et spor, eller er sporet brukt opp, står køen, forsøkene og den
+vanlige ventetiden urørt, og meldingen går den vanlige veien. Feil ved nøkkelen stopper hele
+tilkoblingen som før.
+
+Vekkingen kommer over en utgående forbindelse til `wss://nausto.no/integrasjoner/sensors/live`.
+Den bærer vekking, en ping hvert 45. sekund og livevisningen nedenfor, aldri kommandoer eller
+resultater.
+Billetten til forbindelsen kommer i et godtatt HTTPS-svar, varer høyst ti minutter og står i
+håndtrykkets protokollfelt, aldri i adressen. Den logges, lagres og vises aldri. Med under fem
+minutter igjen henter integrasjonen en ny og kobler til på nytt med den. Etter et brudd kobles den
+til igjen med tilfeldig spredt venting fra ett sekund, doblet til ett minutt. Paring og kortkode
+bruker aldri sporene eller forbindelsen.
+
+Mot en eldre Nausto-server oppfører integrasjonen seg som 0.4.0: alt går den vanlige veien, og den
+spør igjen etter ti minutter. Er live slått av hos Nausto, virker sporene uten vekking, og
+kommandoen hentes med neste vanlige livstegn. Dette er ingen garantert alarmkanal: nett,
+autorisasjon og serverens svar kan utsette levering, og den vanlige veien står alltid som reserve.
+
+## Livevisning
+
+Mens noen ser på båten i Nausto, sender integrasjonen også målingene over liveforbindelsen, så
+verdiene vises uten å vente på minuttbatchen. Når Nausto ber om det, går først siste kjente verdi
+for hver delt kanal med kildens egne tider og måle-ID, og deretter hver ny tilstand fra HA, også
+når køen venter med den på grunn av dødbånd eller ett opptak i minuttet. En verdi bare
+livevisningen har fått, har en egen måle-ID og står bare i minnet; kommer samme avlesning senere i
+en batch, har den samme ID der. En gjentatt tilstand og en verdi eldre enn sju dager går ikke live,
+og en tilstand uten kildetid, som en gjenopprettet tilstand ved oppstart, tar kanalen ut av
+øyeblikksbildet til neste daterte verdi. Siste batchede opptak per kanal beholdes i den private
+køfila til et nyere erstatter det eller kanalen velges bort, så øyeblikksbildet har en verdi også
+etter omstart av HA.
+
+Tall samles og går høyst én gang i sekundet med siste verdi per kanal; av/på, tilstander, ukjent og
+utilgjengelig går straks. Høyst 30 meldinger går på ti sekunder, og det som må vente, slås sammen,
+så siste verdi for hver kanal kommer fram. Sier Nausto stopp, eller brytes eller fornyes
+forbindelsen, stopper strømmen, og det som venter, forkastes til Nausto ber om det igjen.
+
+Livevisningen gjør aldri en gammel verdi ny og erstatter ikke batchene: historikken kommer bare
+gjennom HTTPS-mottaket, og køen, sporene og fartsgrensene er de samme. En Nausto-server uten
+livevisning ber aldri om verdiene.
 
 ## English
 
@@ -169,14 +223,16 @@ renames. Numeric readings use a deadband and a two-minute source-report interval
 limited to once per minute. Re-reading an unchanged report never creates a fresh reading.
 Actual state/alarm and quality transitions are saved immediately and wake a separate sender.
 The first value remains a baseline in the minute window. Transition windows can be sent before
-that minute at the next permitted batch attempt, with at least 31 seconds between requests.
+that minute at the next permitted batch attempt, with at least 31 seconds between regular requests.
 Transitions coalesce durably while waiting. Selection checks, queued batches, network failures
 and server `Retry-After` still apply; sealed retries keep identical bytes and timestamps.
 Source state-change time and source report confirmation remain separate; a gateway
 heartbeat never refreshes a measurement. Unknown/unavailable are preserved. A private SQLite
 queue survives restarts and retries identical batches. Its seven-day / 10,000-observation /
-10-MiB limits and missing HA runtime can leave gaps. Diagnostics expose counts and error types,
-never credentials or sensor data. Use **Configure** to change sharing or retry rejected data.
+10-MiB limits and missing HA runtime can leave gaps. Diagnostics expose counts, error types,
+whether the lanes and live connection are in use and whether the live view is streaming, with its
+own counters, never credentials, live tickets or sensor data.
+Use **Configure** to change sharing or retry rejected data.
 Unselecting a channel in Nausto also reconciles queued captures at the next selection check.
 Sealed batches remain immutable; discarded captures count as gaps, while other sensors continue.
 
@@ -191,14 +247,49 @@ controllable and stay selected until the setup is saved again. A switch or light
 winch, propeller or thruster in its name, entity ID or device name (such as `ankerspill`,
 `windlass`, `vinsj`, `winch`, `propell` or `thruster`, also inside compound words) is not listed and
 is never offered or switched, even if 0.3.0 allowed it, because Nausto cannot tell whether anyone is
-on board. `anchor` alone does not count, so an anchor light can still be switched. Commands use
-fresh nonce-bound HTTP
-responses, the existing global rate/backoff limits and a monotonic lease that includes the full
-round trip and local delays. A durable attempt is required before one concrete HA service call;
+on board. `anchor` alone does not count, so an anchor light can still be switched. Commands arrive
+only in fresh nonce-bound HTTPS responses, never over the live connection, either on the regular
+path with its rate/backoff limits or on the control lane below, with a monotonic lease that
+includes the full round trip and local delays. A durable attempt is required before one concrete HA service call;
 restart or a lost response never repeats the physical action. Acknowledgement is separate from a
 later good source event. Control reserves 64 KiB and 32 state reports within the same total profile
 budget, with at most 128 attempt markers and no state history. Permanent control-message rejection
 stops only control until explicit retry; unauthorized credentials stop the connection.
+
+When the Nausto server supports it, two priority lanes to the same HTTPS endpoint run beside the
+regular path. The control lane fetches a pending command as soon as Nausto wakes the integration and
+sends the acknowledgement and the circuit's source reports for one minute after an executed
+command. The alarm lane sends the window with a new value on an on/off or alarm channel at once.
+Numbers, availability changes, first values and the circuit offer keep the regular pace. The lanes
+use at most 100 and 50 requests per rolling hour and do not wait for the regular 31 seconds. A
+refused or exhausted lane leaves the queue, attempts and regular wait untouched, and the message
+goes the regular way; unauthorized credentials still stop the whole connection. The wake arrives
+over an outbound connection to `wss://nausto.no/integrasjoner/sensors/live` that carries wake
+hints, a ping every 45 seconds and the live view below, never commands or results. Its ticket
+comes in an accepted HTTPS response, lasts at most ten minutes, travels in the handshake's protocol
+header and never in the address, and is never logged, stored or shown. With under five minutes left
+the integration fetches a new ticket and reconnects with it; after a drop it reconnects with
+jittered backoff from one second, doubling to one minute. Pairing never uses the lanes or the
+connection.
+An older Nausto server gets the 0.4.0 behaviour; with live turned off in Nausto the lanes work
+without wake hints. This is not a guaranteed alarm channel: the regular path is always the fallback.
+
+While someone watches the boat in Nausto, the integration also sends the measurements over the live
+connection, so values show without waiting for the minute batch. When Nausto asks, it first sends
+the last known value of each shared channel with its own source times and measurement ID, then each
+new state from HA, also when the queue holds it back because of deadbands or one capture per minute.
+A value only the live view has received carries its own measurement ID and stays in memory only; if
+the same reading later goes into a batch, it keeps that ID there. A repeated state and a value older
+than seven days do not go live, and a state without a source time, such as a restored state at
+startup, takes the channel out of the snapshot until the next dated value. The last batched capture
+per channel stays in the private queue file until a newer one replaces it or the channel is
+unselected, so the snapshot has a value after an HA restart too. Numbers coalesce and go at most
+once a second with the latest value per channel; on/off, states, unknown and unavailable go at once.
+At most 30 messages go in ten seconds, and whatever has to wait is merged so the latest value of
+every channel arrives. When Nausto says stop, or the connection drops or is renewed, the stream
+stops and anything waiting is discarded until Nausto asks again. The live view never makes an old
+value new and never replaces the batches: history comes only through HTTPS, and the queue, lanes and
+rate limits are unchanged. A Nausto server without the live view never asks for the values.
 
 Copyright Nausto. Alle rettigheter forbeholdt. Offentlig kildekode gir ikke i seg selv en
 lisens til annen bruk eller til Naustos merkevare.

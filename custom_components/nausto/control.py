@@ -11,7 +11,7 @@ from uuid import UUID, uuid4, uuid5
 from homeassistant.core import callback
 
 from .mapping import instant, label
-from .const import CONTROL_BYTES
+from .const import CONTROL_BYTES, CONTROL_CONFIRMATION_MS
 from .store import encoded, measurement_id, milliseconds, stamp
 
 COMMAND_KEYS = {"id", "actuator_id", "source_id", "external_id", "actuator_version", "kind", "level_steps", "critical", "requested_at", "expires_at", "target"}
@@ -96,6 +96,11 @@ def protected_name(*values):
 
 def never_offered(*values):
     return any(NEVER_NAME.search((value or "").lower()) is not None for value in values)
+
+
+def digest(message: str) -> str:
+    """Avtrykket sporet husker en avvist melding med, så minnet holder seg lite."""
+    return hashlib.sha256(message.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -302,6 +307,15 @@ class ControlStore:
                 raise ValueError("control_report_limit")
             self.check_budget()
 
+    def _seal(self, kind, key, rows):
+        # Forseglede bytes sendes uendret til de er kvittert, på sporet eller vanlig vei.
+        ids = [row[0] for row in rows]
+        message = encoded({"schema_version": 1, "action": "control_" + kind, key: [json.loads(row[1]) for row in rows]})
+        if kind == "state":
+            self.store.db.executemany("delete from control_reports where actuator_id=?", [(value,) for value in ids])
+        self.store.db.execute("insert into control_outbox values(?,?,?)", (kind, message, encoded(ids)))
+        return {"kind": kind, "message": message, "ids": encoded(ids)}
+
     def next(self):
         with self.store.transaction():
             queued = self.store.db.execute("select kind,message,ids from control_outbox order by kind").fetchone()
@@ -311,19 +325,45 @@ class ControlStore:
             reports = self.store.db.execute("select actuator_id,message from control_reports order by actuator_id limit 16").fetchall()
             results = self.store.db.execute("select command_id,message from control_attempts where pending=1 order by rowid limit 16").fetchall()
             if reports and (not results or last != "state"):
-                kind, key, rows = "state", "reports", reports
+                row = self._seal("state", "reports", reports)
             elif results:
-                kind, key, rows = "result", "results", results
+                row = self._seal("result", "results", results)
             else:
                 return None
-            ids = [row[0] for row in rows]
-            message = encoded({"schema_version": 1, "action": "control_" + kind, key: [json.loads(row[1]) for row in rows]})
-            if kind == "state":
-                self.store.db.executemany("delete from control_reports where actuator_id=?", [(value,) for value in ids])
-            self.store.db.execute("insert into control_outbox values(?,?,?)", (kind, message, encoded(ids)))
-            self.store.set("control_last_kind", kind)
+            self.store.set("control_last_kind", row["kind"])
             self.check_budget(False)
-            return {"kind": kind, "message": message, "ids": encoded(ids)}
+            return row
+
+    def next_priority(self, actuators, results, skip=frozenset()):
+        """Kvitteringen og kildebelegget for kretser med en nylig utført kommando (ADR 320).
+
+        Bare kontrollrapporter og resultater, aldri tilbud. En forseglet rad går først, også når
+        den gjelder andre kretser, fordi hvert slag har én rad. skip er sporets avviste rader."""
+        with self.store.transaction():
+            sealed = {row["kind"]: dict(row) for row in self.store.db.execute("select kind,message,ids from control_outbox")}
+            if results:
+                row = sealed.get("result")
+                if row is None:
+                    pending = self.store.db.execute("select command_id,message from control_attempts where pending=1 order by rowid limit 16").fetchall()
+                    if pending:
+                        row = self._seal("result", "results", pending)
+                        self.check_budget(False)
+                if row is not None and digest(row["message"]) not in skip:
+                    return row
+            if not actuators:
+                return None
+            marks = ",".join("?" * len(actuators))
+            reports = self.store.db.execute(f"select actuator_id,message from control_reports where actuator_id in ({marks}) order by actuator_id limit 16",
+                                            sorted(actuators)).fetchall()
+            row = sealed.get("state")
+            if row is not None:
+                wanted = bool(reports) or not set(json.loads(row["ids"])).isdisjoint(actuators)
+                return row if wanted and digest(row["message"]) not in skip else None
+            if not reports:
+                return None
+            row = self._seal("state", "reports", reports)
+            self.check_budget(False)
+            return row
 
     def accepted(self, row):
         with self.store.transaction():
@@ -344,6 +384,11 @@ class ControlRuntime:
         self.pending_gap = 0
         self.writer = None
         self.stopped = False
+        # Kretser med en nylig utført kommando og fristen for kvitteringen, i monoton tid og bare i
+        # minnet. Etter en omstart går kvitteringer og kildebelegg vanlig vei (ADR 320).
+        self.executed, self.results_until = {}, 0.0
+        # Runtime vekkes når en kvittering eller et kildebelegg kan gå på styringssporet.
+        self.on_priority = None
 
     @property
     def enabled(self):
@@ -360,6 +405,43 @@ class ControlRuntime:
 
     async def wants_nonce(self):
         return self.enabled or await self.db(self.store.get, "control_was_enabled", False)
+
+    async def wants_wake(self):
+        """Et vekk henter bare når en kommando kan tas i mot; ellers henter vanlig vei."""
+        return await self.wants_nonce() and not await self.db(self.store.get, "control_delivery_rejected", False)
+
+    def priority_actuators(self, now):
+        self.executed = {key: until for key, until in self.executed.items() if until > now}
+        return set(self.executed)
+
+    def confirming_until(self, now):
+        """Monoton frist for kvitteringen og kildebelegget på styringssporet, eller None."""
+        until = max([self.results_until, *self.executed.values()])
+        return until if until > now else None
+
+    def _recorded(self, actuator=None):
+        # Kvitteringen, og kildebelegget for kretsen kommandoen ble utført på, tar styringssporet i
+        # 60 sekunder. Et avslag har ingen fysisk handling og gir bare kvitteringen.
+        until = time.monotonic() + CONTROL_CONFIRMATION_MS / 1000
+        self.results_until = until
+        if actuator is not None:
+            self.executed[actuator] = until
+        if self.on_priority is not None:
+            self.on_priority()
+
+    async def next_priority(self, skip=frozenset()):
+        now = time.monotonic()
+        actuators, results = self.priority_actuators(now), now < self.results_until
+        if not (actuators or results) or not self.supported or await self.db(self.store.get, "control_delivery_rejected", False):
+            return None
+        # Tilbudet går alltid vanlig vei og først; før serveren har det, venter belegget på det.
+        if await self.db(self.store.get, "control_offered") != encoded(self.offer):
+            return None
+        try:
+            return await self.db(self.storage.next_priority, actuators, results, skip)
+        except ValueError:
+            # Lagringsgrensen gjelder også vanlig vei, som melder gapet når den forsøker.
+            return None
 
     async def refresh(self):
         for remove in self.listeners:
@@ -428,6 +510,8 @@ class ControlRuntime:
             report = await self.queue.get()
             try:
                 await self.db(self.storage.report, report)
+                if self.on_priority is not None and report["actuator_id"] in self.priority_actuators(time.monotonic()):
+                    self.on_priority()
                 if self.pending_gap:
                     count, self.pending_gap = self.pending_gap, 0
                     await self.db(self.store.note_gap, count, milliseconds(report["reported_at"]))
@@ -450,14 +534,16 @@ class ControlRuntime:
             self.pending_gap += 1
             return None
 
-    async def accepted(self, row):
+    async def accepted(self, row, priority=False):
         if row["kind"] == "offer":
             await self.db(self.storage.mark_offered, row["message"])
             if not self.enabled:
                 await self.db(self.store.set, "control_was_enabled", False)
         else:
             await self.db(self.storage.accepted, row)
-        await self.db(self.store.set, "control_last_was_control", True)
+        if not priority:
+            # Styringssporet deler ikke den vanlige veiens veksling mellom styring og målinger.
+            await self.db(self.store.set, "control_last_was_control", True)
 
     async def receipt(self, data, nonce, elapsed_ms, generation=None):
         received = time.monotonic()
@@ -499,10 +585,12 @@ class ControlRuntime:
                 reason = "expired"
             if reason:
                 await self.db(self.storage.finish, command["id"], attempt, "rejected", reason)
+                self._recorded()
                 continue
             # Stopp og monoton levetid kontrolleres igjen umiddelbart før ett konkret HA-kall.
             if self.stopped or not self.enabled or time.monotonic() >= deadline:
                 await self.db(self.storage.finish, command["id"], attempt, "rejected", "local_disabled" if self.stopped or not self.enabled else "expired")
+                self._recorded()
                 continue
             entity = found[1]
             domain = entity.entity_id.partition(".")[0]
@@ -518,6 +606,7 @@ class ControlRuntime:
                 await self.db(self.storage.finish, command["id"], attempt, "unknown", "network_unknown")
             else:
                 await self.db(self.storage.finish, command["id"], attempt, "acknowledged", None)
+            self._recorded(command["actuator_id"])
             # Én ny kontrollhandling får kildebelegget ut før vanlig fairness gjenopptas.
             await self.db(self.store.set, "control_last_was_control", False)
 

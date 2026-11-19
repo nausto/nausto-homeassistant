@@ -16,6 +16,8 @@ class Receipt:
     status: int
     retry: int
     data: dict | None
+    # Sporet serveren avgrenset med X-Nausto-Priority-Limited, bare ved 429 (ADR 320).
+    limited: str | None = None
 
 
 class Client:
@@ -36,15 +38,24 @@ class Client:
                      url.scheme == "http" and url.hostname in ("127.0.0.1", "localhost", "::1"))):
             raise ValueError("invalid_pair_endpoint")
 
-    async def send(self, key: str, message: str, control_nonce: str | None = None) -> Receipt:
+    async def send(self, key: str, message: str, control_nonce: str | None = None,
+                   priority: str | None = None, live: bool = False) -> Receipt:
+        """Uten spor og live er forespørselen den samme som før 0.5.0."""
         try:
             action = json.loads(message)["action"]
             short_pair = key.startswith("nsc_")
             if short_pair and action != "pair":
                 return Receipt(False, 400, 0, None)
+            # Et spor tar bare sine egne handlinger, aldri paring, kortkode eller tilbud.
+            if priority is not None and (short_pair or action not in const.PRIORITY_ACTIONS.get(priority, ())):
+                return Receipt(False, 400, 0, None)
             headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
             if control_nonce is not None:
                 headers["X-Nausto-Control-Nonce"] = control_nonce
+            if priority is not None:
+                headers[const.PRIORITY_HEADER] = priority
+            if live and not short_pair and action != "pair":
+                headers[const.LIVE_HEADER] = "1"
             async with self.session.post(
                 self.pair_endpoint if short_pair else self.endpoint, data=message.encode(),
                 headers=headers,
@@ -66,7 +77,8 @@ class Client:
                 retry_text = response.headers.get("Retry-After", "0")
                 retry = min(600 if short_pair else 3600, int(retry_text)) if retry_text.isdecimal() else 0
                 expected = ("paired",) if action == "pair" else ("accepted", "duplicate") if action == "batch" else ("accepted",)
+                limited = response.headers.get(const.PRIORITY_LIMITED_HEADER) if response.status == 429 else None
                 return Receipt(response.status == 200 and data is not None and data.get("status") in expected,
-                               response.status, retry, data)
+                               response.status, retry, data, limited if limited in const.PRIORITY_LIMITS else None)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, UnicodeDecodeError):
             return Receipt(False, 503, 0, None)

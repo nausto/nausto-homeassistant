@@ -12,9 +12,10 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers import entity_registry, issue_registry
 
 from .client import Client
-from .control import ControlRuntime
-from .const import INTERVAL_SECONDS, MAX_ATTEMPTS, REQUEST_INTERVAL_MS
+from .control import ControlRuntime, digest
+from .const import ALARM_LANE_MS, INTERVAL_SECONDS, MAX_ATTEMPTS, PRIORITY_LIMITS, REQUEST_INTERVAL_MS, WAKE_MS
 from .entities import metadata, snapshots
+from .live import Lane, Live, Values, live_url
 from .mapping import catalog, discovery, instant, kind, reading
 from .store import encoded
 from .profiles import connection_id
@@ -45,6 +46,19 @@ class Runtime:
         self.delivery_wakeup = None
         self.next_scan = 0
         self.actuation = ControlRuntime(hass, entry, store, self.db)
+        self.actuation.on_priority = self.request_priority
+        # Prioritert sendevei og vekking (ADR 320). Sporene brukes bare etter at serveren har svart
+        # med live_protocol, så en eldre server aldri teller dem mot den vanlige veiens tak.
+        self.priority = None
+        self.lanes = {name: Lane(name) for name in PRIORITY_LIMITS}
+        # Avtrykk av meldinger et spor har avvist; de går vanlig vei og prøves ikke igjen på sporet.
+        self.lane_skip = {name: set() for name in PRIORITY_LIMITS}
+        self.priority_task = self.priority_wakeup = self.live_task = None
+        self.priority_again, self.priority_due = False, 0.0
+        # Monoton tid for siste vekk som ikke er hentet; flere vekk før en henting blir én.
+        self.wake_at = None
+        url = live_url(client.pair_endpoint)
+        self.live = Live(client.session, url, self.request_wake, allowed=self.live_channels) if url else None
 
     async def db(self, function, *args):
         return await self.hass.async_add_executor_job(function, *args)
@@ -55,6 +69,7 @@ class Runtime:
         if control.get("failure") != "unauthorized":
             self.selected = set(await self.db(self.store.get, "selected", []))
         await self.refresh()
+        await self.remember_live()
         self.writer = self.entry.async_create_background_task(self.hass, self.write_events(), "nausto-capture")
         self.listeners = [
             self.hass.bus.async_listen("entity_registry_updated", self.registry_changed),
@@ -62,6 +77,9 @@ class Runtime:
             async_track_time_interval(self.hass, self.periodic, timedelta(seconds=INTERVAL_SECONDS)),
         ]
         self.entry.async_on_unload(self.unsubscribe)
+        if self.live is not None:
+            # Forbindelsen venter på en billett fra et vanlig svar og stoppes i async_stop.
+            self.live_task = self.entry.async_create_background_task(self.hass, self.live.run(), "nausto-live")
         self.poll()
         await self.tick()
         await self.maintain_delivery()
@@ -135,12 +153,15 @@ class Runtime:
         if self.stopped or channel is None or channel["id"] not in self.selected:
             return
         value = reading(entity, channel)
-        if value is None:
+        if value is None and self.live is None:
             return
         try:
+            # En udatert verdi (None) blir ikke noe opptak, men tar kanalen ut av livevisningens
+            # øyeblikksbilde, i samme rekkefølge som opptakene.
             self.pending.put_nowait((channel, value, clock()))
         except asyncio.QueueFull:
-            self.pending_gap += 1
+            if value is not None:
+                self.pending_gap += 1
 
     def poll(self):
         # Les rapporttiden fra HA. Periodisk kjøring setter aldri et nytt kildetidspunkt.
@@ -149,9 +170,19 @@ class Runtime:
 
     async def write_events(self):
         while True:
-            item = await self.pending.get()
+            channel, value, now = await self.pending.get()
             try:
-                captured = await self.db(self.store.capture, *item)
+                captured, observed = await self.db(self.store.record, channel, value, now)
+                if self.live is not None:
+                    # Hver ny, datert verdi er siste kjente for livevisningen, også når batchen venter;
+                    # den går live bare mens serveren sier «på». Batchen, køen og sporene er uendret.
+                    if value is None:
+                        self.live.forget(channel["id"])
+                    elif observed:
+                        self.live.observed(observed)
+                # Alarmsporet først, så overgangen ikke venter på den vanlige veiens luke.
+                if captured and self.priority is True and await self.db(self.store.last_alarm, clock() - ALARM_LANE_MS) is not None:
+                    self.request_priority()
                 if captured and await self.db(self.store.has_urgent):
                     self.request_delivery()
                 if self.pending_gap:
@@ -184,6 +215,11 @@ class Runtime:
 
     async def deliver_changes(self):
         try:
+            if self.network.locked():
+                # Et kall er i gang, kanskje på et spor som ikke flytter den vanlige luka. Vent på
+                # det, så neste luke regnes etterpå i stedet for at vekkingen går i ring.
+                async with self.network:
+                    pass
             await self.tick()
             if self.stopped or not self.authorized:
                 return
@@ -273,12 +309,22 @@ class Runtime:
             if self.stopped:
                 return
             nonce = secrets.token_hex(16) if await self.actuation.wants_nonce() else None
+            # Billetten bes om på en vanlig forespørsel, høyst én gang i minuttet (ADR 320).
+            ask = self.live is not None and self.live.should_ask(self.live.monotonic())
+            if ask:
+                self.live.asked(self.live.monotonic())
             started = time.monotonic()
-            result = await self.client.send(key, message, nonce) if nonce else await self.client.send(key, message)
+            if ask:
+                result = await self.client.send(key, message, nonce, live=True)
+            else:
+                result = await self.client.send(key, message, nonce) if nonce else await self.client.send(key, message)
             if self.stopped or await self.db(self.store.get, "generation", 0) != self.generation:
                 return
             elapsed = (time.monotonic() - started) * 1000
+            if result.ok and ask:
+                self.live_answered(result.data)
             if result.ok and nonce is not None:
+                self.served_wake(started)
                 await self.actuation.receipt(result.data, nonce, elapsed, self.generation)
             if result.ok and actuation_row is not None:
                 await self.actuation.accepted(actuation_row)
@@ -324,17 +370,192 @@ class Runtime:
                     self.authorized, self.failure = False, "connection"
                     await self.db(self.store.set, "control", {"attempts": 0, "retry_at": now + 30_000, "failure": "connection"})
                     return
-            attempts = control["attempts"] + 1
-            failure = "unauthorized" if result.status == 401 else "rejected" if result.status in (400, 403, 409, 413) else "attempts_exhausted" if attempts >= MAX_ATTEMPTS else "connection"
-            delay = min(3600, max(result.retry, 2 ** min(attempts, 11)))
-            await self.db(self.store.set, "control", {"attempts": attempts, "retry_at": now + delay * 1000, "failure": failure})
-            self.failure = failure
-            if result.status == 401:
-                self.authorized = False
-                self.selected.clear()
-                if not self.reauth_requested:
-                    self.entry.async_start_reauth(self.hass)
-                    self.reauth_requested = True
+            await self.connection_failed(control, result, now)
+
+    async def connection_failed(self, control, result, now):
+        """Den vanlige veiens ventetid og feiltilstand; 401 gjelder hele tilkoblingen, også fra et spor."""
+        attempts = control["attempts"] + 1
+        failure = "unauthorized" if result.status == 401 else "rejected" if result.status in (400, 403, 409, 413) else "attempts_exhausted" if attempts >= MAX_ATTEMPTS else "connection"
+        delay = min(3600, max(result.retry, 2 ** min(attempts, 11)))
+        await self.db(self.store.set, "control", {"attempts": attempts, "retry_at": now + delay * 1000, "failure": failure})
+        self.failure = failure
+        if result.status == 401:
+            self.authorized = False
+            self.selected.clear()
+            if not self.reauth_requested:
+                self.entry.async_start_reauth(self.hass)
+                self.reauth_requested = True
+
+    def live_answered(self, data):
+        """Et godtatt svar på en billettforespørsel avgjør om sporene brukes."""
+        before = self.priority
+        self.priority = self.live.answered(data, self.live.monotonic())
+        if not self.priority:
+            # En eldre server: ingen spor og ingen vekking før et nytt svar følger kontrakten.
+            self.wake_at = None
+        elif before is not True:
+            self.request_priority()
+
+    @callback
+    def request_wake(self):
+        """Et vekk fra forbindelsen ber bare om én henting gjennom HTTPS på styringssporet."""
+        if self.stopped or self.priority is not True:
+            return
+        self.wake_at = time.monotonic()
+        self.request_priority()
+
+    def served_wake(self, started):
+        # En forespørsel med nonce som startet etter vekket, har hentet kommandoen.
+        if self.wake_at is not None and started >= self.wake_at:
+            self.wake_at = None
+
+    @callback
+    def request_priority(self):
+        """Prioritert arbeid går straks, men etter et kall som er i gang, aldri samtidig med det."""
+        if self.stopped or self.priority is not True:
+            return
+        self.priority_again = True
+        if self.priority_task is None or self.priority_task.done():
+            self.priority_task = self.entry.async_create_background_task(
+                self.hass, self.deliver_priority(), "nausto-priority")
+
+    async def deliver_priority(self):
+        try:
+            while self.priority_again and not self.stopped:
+                self.priority_again = False
+                async with self.network:
+                    if self.stopped:
+                        return
+                    if await self.priority_tick():
+                        self.priority_again = True
+        except Exception:
+            self.local_failure = True
+
+    @callback
+    def wake_priority(self):
+        self.priority_wakeup = None
+        self.request_priority()
+
+    def retry_priority(self, seconds):
+        """Én vekking til sporet er ledig igjen; en tidligere frist erstatter en senere."""
+        due = time.monotonic() + seconds
+        if self.stopped or self.priority_wakeup is not None and self.priority_due <= due:
+            return
+        if self.priority_wakeup is not None:
+            self.priority_wakeup.cancel()
+        self.priority_due = due
+        self.priority_wakeup = self.hass.loop.call_later(max(.1, seconds), self.wake_priority)
+
+    async def priority_tick(self):
+        """Ett kall på et prioritert spor når det har arbeid. Sann når et kall ble gjort.
+
+        Samme kontroll av nøkkel, generasjon, autorisasjon og avslag som den vanlige veien, men
+        ikke dens mellomrom: sporene har egne tak og pauser og flytter aldri last_request."""
+        if self.priority is not True or not self.authorized:
+            return False
+        key = await self.db(self.store.get, "key")
+        generation = await self.db(self.store.get, "generation", 0)
+        control = await self.db(self.store.get, "control", {"attempts": 0, "retry_at": 0, "failure": None})
+        if not key or generation != self.generation or control["failure"] in ("unauthorized", "rejected", "attempts_exhausted"):
+            return False
+        now = time.monotonic()
+        waits = []
+        lane = self.lanes["control"]
+        if self.wake_at is not None and (now - self.wake_at > WAKE_MS / 1000 or not await self.actuation.wants_wake()):
+            # Etter et minutt er kommandoen utløpt eller hentet vanlig vei.
+            self.wake_at = None
+        if self.wake_at is not None:
+            wait = lane.wait(now)
+            if not wait:
+                return await self.send_lane(lane, key, control, encoded({"schema_version": 1, "action": "heartbeat"}), wake=True)
+            if wait < self.wake_at + WAKE_MS / 1000 - now:
+                waits.append(wait)
+        until = self.actuation.confirming_until(now)
+        if until is not None:
+            wait = lane.wait(now)
+            if not wait:
+                row = await self.actuation.next_priority(self.lane_skip["control"])
+                if row is not None:
+                    return await self.send_lane(lane, key, control, row["message"], row=row)
+            elif wait < until - now:
+                waits.append(wait)
+        lane = self.lanes["alarm"]
+        since = clock() - ALARM_LANE_MS
+        latest = await self.db(self.store.last_alarm, since) if self.selected else None
+        if latest is not None:
+            wait = lane.wait(now)
+            if not wait:
+                await self.db(self.store.seal_alarm, clock(), since)
+                batch = await self.db(self.store.next_alarm, since, tuple(self.lane_skip["alarm"]))
+                if batch is not None:
+                    return await self.send_lane(lane, key, control, batch["message"], batch=batch)
+            elif wait * 1000 < latest + ALARM_LANE_MS - clock():
+                waits.append(wait)
+        if waits:
+            self.retry_priority(min(waits))
+        return False
+
+    async def send_lane(self, lane, key, control, message, row=None, batch=None, wake=False):
+        """Ett kall på sporet. Et avslag eller en feil endrer bare sporet: køen, forsøkene, den
+        vanlige ventetiden og avslagsflaggene står, og meldingen går vanlig vei senere."""
+        nonce = secrets.token_hex(16) if await self.actuation.wants_nonce() else None
+        if self.stopped or wake and nonce is None:
+            return False
+        lane.count(time.monotonic())
+        started = time.monotonic()
+        result = await self.client.send(key, message, nonce, priority=lane.name)
+        if self.stopped or await self.db(self.store.get, "generation", 0) != self.generation:
+            return False
+        elapsed = (time.monotonic() - started) * 1000
+        if result.ok:
+            lane.accepted()
+            if nonce is not None:
+                self.served_wake(started)
+                await self.actuation.receipt(result.data, nonce, elapsed, self.generation)
+            if row is not None:
+                await self.actuation.accepted(row, True)
+            elif batch is not None:
+                await self.db(self.store.accepted, batch["id"])
+            return True
+        if result.status == 401:
+            await self.connection_failed(control, result, clock())
+            return False
+        now = time.monotonic()
+        if result.status == 429 and result.retry:
+            # Serverens tak for sporet; den vanlige veien sperres ikke av det.
+            lane.limited(now, result.retry)
+        else:
+            lane.failed(now)
+        # priority_refused eller et annet avslag: sporet prøver ikke den samme meldingen igjen.
+        refused = (result.status == 429 and result.limited == lane.name and not result.retry or
+                   400 <= result.status < 500 and result.status != 429)
+        if refused and wake:
+            # Serveren har ingen ventende kommando for et vekket livstegn; vanlig vei er reserven.
+            self.wake_at = None
+        elif refused:
+            skip = self.lane_skip[lane.name]
+            if len(skip) >= 64:
+                skip.clear()
+            skip.add(digest(message) if row is not None else batch["id"])
+        return True
+
+    def live_channels(self):
+        """Kanalene batchene tar nå. Liveverdiene følger samme utvalg, også når det endres."""
+        return {channel["id"] for channel in self.channels.values()} & self.selected
+
+    async def remember_live(self):
+        """Øyeblikksbildet etter omstart eller nye valg: siste batchede opptak per kanal fra køfila, med
+        samme ID og tider. En nyere verdi, også en bare strømmen har fått, går foran den i minnet."""
+        if self.live is not None:
+            for observation in await self.db(self.store.latest):
+                self.live.observed(observation)
+
+    def live_status(self):
+        """Bare tilstand og tellere; billetten og liveverdiene vises aldri."""
+        now = time.monotonic()
+        stream = (self.live.values if self.live is not None else Values()).status()
+        return {"priority_supported": self.priority is True, "connected": self.live is not None and self.live.connected,
+                **{f"{name}_requests_hour": lane.used(now) for name, lane in self.lanes.items()}, **stream}
 
     async def health(self):
         status = await self.db(self.store.status)
@@ -361,6 +582,12 @@ class Runtime:
         if self.delivery_wakeup is not None:
             self.delivery_wakeup.cancel()
             self.delivery_wakeup = None
+        if self.priority_wakeup is not None:
+            self.priority_wakeup.cancel()
+            self.priority_wakeup = None
+        if self.live is not None:
+            # Forbindelsen og alle åpne forsøk lukkes før databasene.
+            await self.live.stop(self.live_task)
         self.unsubscribe()
         if self.rescan_task and not self.rescan_task.done():
             self.rescan_task.cancel()
@@ -378,8 +605,9 @@ class Runtime:
                 await self.db(self.store.note_gap, self.pending.qsize(), clock())
             self.writer.cancel()
             await asyncio.gather(self.writer, return_exceptions=True)
-        if self.delivery_task:
-            await asyncio.gather(self.delivery_task, return_exceptions=True)
+        for task in (self.delivery_task, self.priority_task):
+            if task:
+                await asyncio.gather(task, return_exceptions=True)
         # En utestående kvittering må være ferdig før SQLite-forbindelsen lukkes.
         async with self.network:
             await self.actuation.stop()

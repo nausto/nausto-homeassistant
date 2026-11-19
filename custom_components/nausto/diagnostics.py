@@ -15,5 +15,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
         "discarded_profile_observations": await hass.async_add_executor_job(runtime.profiles.index.get, "discarded", 0),
         "remote_control": {"enabled": runtime.actuation.enabled, "protocol_supported": runtime.actuation.supported,
                            **await hass.async_add_executor_job(runtime.actuation.storage.status)},
+        # Prioritert sendevei og liveforbindelse som tilstand og tellere; aldri billetten.
+        "live": runtime.live_status(),
         **counters,
     }
