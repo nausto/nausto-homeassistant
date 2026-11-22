@@ -17,8 +17,9 @@ egen tjeneste eller en Home Assistant-tilgangsnøkkel hos Nausto.
 2. I Nausto: åpne **Båten → Sensorer → Tilkoblinger og sensorer**, opprett en tilkobling
    for **Home Assistant**, og kopier paringskoden. Du må eie båten. Koden varer ti minutter.
 3. I Home Assistant: **Innstillinger → Enheter og tjenester → Legg til integrasjon → Nausto**.
-   Skriv koden med åtte tegn eller lim inn koden i feltet **Paringskode**, og velg bare
-   entitetene som tilhører båten. Eldre paringskoder og kopiert QR-innhold virker fortsatt.
+   Skriv koden med åtte tegn eller lim inn koden i feltet **Paringskode**. Velg båtens område,
+   eller hele installasjonen hvis den bare brukes om bord. Velg enkelte entiteter i lista ved
+   behov. Eldre paringskoder og kopiert QR-innhold virker fortsatt.
 4. Tilbake i Nausto velger du **Følg denne sensoren**, hvilken komponent den tilhører og
    eventuell primærkilde. Målinger og historikk vises når delingen er aktivert begge steder.
 
@@ -34,7 +35,9 @@ retry etter tapt svar bruker ikke et nytt forsøk.
 
 ## Valg, tilstander og tid
 
-**Konfigurer** på integrasjonen lar deg endre det lokale delingsvalget. Et lokalt fjernet valg
+Under **Konfigurer** på en paret integrasjon velger du område eller hele installasjonen én gang.
+Deretter dukker nye støttede sensorer innenfor valget opp under **Legg til sensorer** i Nausto.
+Et lokalt fjernet valg
 stopper videre deling og fjerner det fra den usendte køen. En forseglet batch omskrives ikke;
 inneholder den også en fjernet kanal, kasseres hele batchen og tapet telles i diagnostikken.
 Nausto beholder allerede mottatt historikk. Deaktiver eller tilbakekall tilkoblingen i Nausto
@@ -48,13 +51,16 @@ som datagap. De gjenværende sensorene fortsetter, også hvis valget ble endret 
 livstegn og en sending.
 
 Sensorer identifiseres med HAs entitetsregister og grupperes med enhetsregisteret. Navneendring
-beholder identiteten; en erstattet entitet med ny register-ID krever et nytt delingsvalg.
+beholder identiteten. En erstatning med ny register-ID er en ny sensor i Nausto, og vises der
+automatisk når den ligger innenfor delingsvalget.
 Navn brukes ikke til å gjette hva som måles. Maksimalt 64 entiteter fra 16 enheter deles per
 tilkobling, med opptil fem lokale tilkoblingsprofiler.
 
 Støttede størrelser er spenning, strøm, effekt, brukt kapasitet, temperatur, prosent, hastighet,
 varighet, kumulativ energi, trykk, volum, volumstrøm og akselerasjon med dokumenterte enheter,
-antall fra HAs `counter`-entiteter, binære tilstander/alarmer og enum-tilstander. Energi fra
+antall fra HAs `counter`-entiteter, binære tilstander/alarmer, enum-tilstander og hendelser fra
+`event`-entiteter, som knapper, ringeklokker og bevegelse. En hendelse sendes som «på» med
+tidspunktet hendelsen skjedde, og Nausto får vite at den er en hendelse. Energi fra
 `device_class: energy` konverteres til joule; `energy_storage` og energi uten oppgitt klasse
 støttes ikke, siden lagret energi ikke er samme teller som brukt energi. Prosent omtolkes ikke
 til liter. Antall må være et ikke-negativt heltall. Batteriprosent merkes estimert, øvrige
@@ -107,8 +113,8 @@ sensorer. Styring av brytere og lys står nedenfor.
 
 ## Styring av brytere og lys
 
-Brytere og lys på samme enhet som en delt sensor kan slås av og på fra Nausto med en gang. Andre
-brytere og lys velger du i samme liste som sensorene. Det finnes ingen egen lov om bord, og eieren
+Du kan styre brytere og lys du velger i lista, og dem som sitter på samme enhet som en sensor du
+velger der. Det finnes ingen egen lov om bord, og eieren
 aktiverer ingenting i Nausto. Innstillinger, diagnostikk og skjulte entiteter på enheten følger ikke
 med av seg selv. Det er høyst 16 kretser, de valgte først, og fortsatt høyst 16 kilder totalt per
 tilkobling. En ren bryter trenger ingen kunstig sensorverdi.
@@ -203,8 +209,9 @@ livevisning ber aldri om verdiene.
 Add `https://github.com/nausto/nausto-homeassistant` as a custom **Integration** repository in
 HACS, download **Nausto**, and restart Home Assistant. In Nausto, open your boat's sensors,
 create a Home Assistant connection and copy the ten-minute pairing code. In HA, add the
-**Nausto** integration, enter its eight-character code or paste a copied code and select the
-boat entities to share. Older codes and copied QR payloads remain supported. Return to Nausto
+**Nausto** integration, enter its eight-character code or paste a copied code and choose the
+boat's area, or the entire installation if it is only used on board. You can also choose individual
+entities. Older codes and copied QR payloads remain supported. Return to Nausto
 to follow each channel, assign its component and choose its primary source. The setup and
 options forms are available in English and Norwegian.
 
@@ -218,8 +225,9 @@ acceleration and nonnegative integer counts from HA counter entities, alongside 
 quantities. Values use canonical SI units. Energy requires the `energy` device class;
 `energy_storage` is not reinterpreted as cumulative consumption, and percentages are not volumes.
 
-Only explicitly selected entities are offered. HA registry IDs keep identities stable through
-renames. Numeric readings use a deadband and a two-minute source-report interval, with ordinary samples
+For an existing pairing, use **Configure** once to choose the area or installation. New supported
+sensors in that scope then appear under **Add sensors** in Nausto. HA registry IDs keep identities
+stable through renames. Numeric readings use a deadband and a two-minute source-report interval, with ordinary samples
 limited to once per minute. Re-reading an unchanged report never creates a fresh reading.
 Actual state/alarm and quality transitions are saved immediately and wake a separate sender.
 The first value remains a baseline in the minute window. Transition windows can be sent before

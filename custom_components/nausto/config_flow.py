@@ -1,4 +1,4 @@
-"""Vanlig HA-oppsett: velg entiteter og bruk den kortlivede Nausto-koden."""
+"""Paring med Nausto og valg av hvilke sensorer integrasjonen kan tilby."""
 
 from pathlib import Path
 import sqlite3
@@ -8,12 +8,12 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.helpers import aiohttp_client, instance_id, selector
+from homeassistant.helpers import aiohttp_client, area_registry, instance_id, selector
 
 from .client import Client
 from .control import MAX_CONTROLS, candidates as control_candidates, control_catalog, controllable, legacy_controls
 from .const import DOMAIN, MAX_ENTITIES
-from .entities import candidates, snapshots
+from .entities import candidates, discovery_settings, snapshots
 from .mapping import catalog, kind
 from .profiles import Profiles, connection_id
 from .pairing import read_pairing
@@ -27,11 +27,15 @@ def now() -> int:
     return int(time.time() * 1000)
 
 
-def form_schema(available, selected, pairing=False, retry=False):
+def form_schema(available, selected, scope, *, pairing=False, retry=False):
     # Sensorer, brytere og lys står i samme liste; ingen egen lov om bord for styring (ADR 310).
     fields = {}
     if pairing:
         fields[vol.Required("pairing_code")] = selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))
+    discover_all, discover_area = scope
+    fields[vol.Required("discover_all", default=discover_all)] = selector.BooleanSelector()
+    description = {"suggested_value": discover_area} if discover_area else None
+    fields[vol.Optional("discover_area", description=description)] = selector.AreaSelector()
     options = [{"value": entity.registry_id, "label": f"{entity.device_name + ' · ' if entity.device_name else ''}{entity.name} ({entity.entity_id})"[:200]}
                for entity in sorted(available.values(), key=lambda item: (item.device_name, item.name, item.entity_id))]
     fields[vol.Required("entities", default=[value for value in selected if value in available])] = selector.SelectSelector(selector.SelectSelectorConfig(
@@ -62,6 +66,21 @@ def selection_error(error):
     return str(error) if str(error) in ("invalid_entities", "invalid_controls") else "source_limit"
 
 
+def scope_from_input(user_input):
+    return user_input.get("discover_all") is True, user_input.get("discover_area") or None
+
+
+def valid_scope(hass, scope):
+    discover_all, area = scope
+    return area is None or (
+        not discover_all and isinstance(area, str) and area_registry.async_get(hass).async_get_area(area) is not None
+    )
+
+
+def sharing_options(selected, scope):
+    return {"entities": selected, "discover_all": scope[0], "discover_area": scope[1]}
+
+
 class NaustoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -74,34 +93,43 @@ class NaustoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         sensors = {entity.registry_id: entity for entity in candidates(self.hass).values()}
         controls = control_candidates(self.hass)
         available = {**sensors, **controls}
-        errors, selected = {}, []
+        errors, selected, scope = {}, [], (False, None)
+        if self.source == config_entries.SOURCE_REAUTH:
+            entry = self._get_reauth_entry()
+            selected = entry.options.get("entities", entry.data.get("entities", []))
+            scope = discovery_settings(entry)
         if user_input is not None:
             selected = user_input.get("entities", [])
+            scope = scope_from_input(user_input)
             instance = await instance_id.async_get(self.hass)
+            if not valid_scope(self.hass, scope):
+                errors["discover_area"] = "invalid_scope"
             # Kontroller valget og kildegrensen før en engangskode brukes.
             try:
-                validate_selection("00000000-0000-4000-8000-000000000000", instance, sensors, controls, selected)
+                validate_selection("00000000-0000-4000-8000-000000000000", instance, sensors, controls, selected,
+                                   required=not any(scope))
             except ValueError as error:
                 errors["entities" if str(error) == "invalid_entities" else "base"] = selection_error(error)
-            if not errors:
-                return await self._pair(user_input["pairing_code"].strip(), selected, available, instance)
-        return self.async_show_form(step_id="user", data_schema=form_schema(available, selected if isinstance(selected, list) else [], pairing=True), errors=errors)
+        form = form_schema(available, selected if isinstance(selected, list) else [], scope, pairing=True)
+        if user_input is not None and not errors:
+            return await self._pair(user_input["pairing_code"].strip(), sharing_options(selected, scope), form, instance)
+        return self.async_show_form(step_id="user", data_schema=form, errors=errors)
 
-    async def _pair(self, code, selected, available, instance):
+    async def _pair(self, code, options, form, instance):
         profiles = None
         try:
             client = Client(aiohttp_client.async_get_clientsession(self.hass))
             code, expected_connection = read_pairing(code, client.endpoint)
             profiles = await self.hass.async_add_executor_job(Profiles, Path(self.hass.config.path(".storage", DOMAIN)), instance)
             if code.startswith("nsc_") and await self.hass.async_add_executor_job(profiles.index.get, "pairing_retry_at", 0) > now():
-                return self.async_show_form(step_id="user", data_schema=form_schema(available, selected, pairing=True), errors={"base": "pairing_rate_limited"})
+                return self.async_show_form(step_id="user", data_schema=form, errors={"base": "pairing_rate_limited"})
             key = await self.hass.async_add_executor_job(profiles.prepare, code, now())
             receipt = await client.send(code, encoded({"schema_version": 1, "action": "pair", "producer_key": key}))
             if not receipt.ok:
                 if receipt.status == 429 and code.startswith("nsc_"):
                     await self.hass.async_add_executor_job(profiles.index.set, "pairing_retry_at", now() + max(1, receipt.retry) * 1000)
                 error = "pairing_rate_limited" if receipt.status == 429 and code.startswith("nsc_") else "cannot_connect" if receipt.status >= 500 else "pairing_failed"
-                return self.async_show_form(step_id="user", data_schema=form_schema(available, selected, pairing=True), errors={"base": error})
+                return self.async_show_form(step_id="user", data_schema=form, errors={"base": error})
             target = connection_id(receipt.data.get("connection_id"))
             if code.startswith("nsc_"):
                 await self.hass.async_add_executor_job(profiles.index.set, "pairing_retry_at", 0)
@@ -109,12 +137,11 @@ class NaustoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 raise ValueError("wrong_connection")
             existing = self._get_reauth_entry() if self.source == config_entries.SOURCE_REAUTH else None
             if existing is not None and existing.data["connection_id"] != target:
-                return self.async_show_form(step_id="user", data_schema=form_schema(available, selected, pairing=True), errors={"base": "wrong_boat"})
+                return self.async_show_form(step_id="user", data_schema=form, errors={"base": "wrong_boat"})
             active = [entry.data["connection_id"] for entry in self._async_current_entries()]
             profile = await self.hass.async_add_executor_job(profiles.activate, target, key, now(), active)
             await self.hass.async_add_executor_job(profile.close)
             configured = await self.async_set_unique_id(target)
-            options = {"entities": selected}
             data = {"connection_id": target, "instance_id": instance, **options}
             if existing is not None:
                 self._abort_if_unique_id_mismatch()
@@ -132,9 +159,9 @@ class NaustoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             category = str(error)
             if category not in ("invalid_code", "wrong_connection", "instance_changed", "pairing_limit", "connection_limit"):
                 category = "pairing_failed"
-            return self.async_show_form(step_id="user", data_schema=form_schema(available, selected, pairing=True), errors={"base": category})
+            return self.async_show_form(step_id="user", data_schema=form, errors={"base": category})
         except (OSError, sqlite3.Error):
-            return self.async_show_form(step_id="user", data_schema=form_schema(available, selected, pairing=True), errors={"base": "local_state"})
+            return self.async_show_form(step_id="user", data_schema=form, errors={"base": "local_state"})
         finally:
             if profiles is not None:
                 await self.hass.async_add_executor_job(profiles.close)
@@ -161,8 +188,12 @@ class NaustoOptionsFlow(config_entries.OptionsFlow):
             status = await self.hass.async_add_executor_job(profile.status)
             retry = bool(status["rejected_batches"] or status["control"]["failure"] or await self.hass.async_add_executor_job(profile.get, "control_delivery_rejected", False))
             errors = {}
+            scope = discovery_settings(self.config_entry)
             if user_input is not None:
                 chosen = user_input.get("entities", [])
+                scope = scope_from_input(user_input)
+                if not valid_scope(self.hass, scope):
+                    errors["discover_area"] = "invalid_scope"
                 try:
                     validate_selection(self.config_entry.data["connection_id"], instance, sensors, controls, chosen, required=False)
                 except ValueError as error:
@@ -170,9 +201,9 @@ class NaustoOptionsFlow(config_entries.OptionsFlow):
                 if not errors:
                     if user_input.get("retry_failed"):
                         await self.hass.async_add_executor_job(profile.retry)
-                    return self.async_create_entry(title="", data={"entities": chosen})
+                    return self.async_create_entry(title="", data=sharing_options(chosen, scope))
                 selected = chosen if isinstance(chosen, list) else selected
-            return self.async_show_form(step_id="init", data_schema=form_schema(available, selected, retry=retry), errors=errors)
+            return self.async_show_form(step_id="init", data_schema=form_schema(available, selected, scope, retry=retry), errors=errors)
         finally:
             if profile is not None:
                 await self.hass.async_add_executor_job(profile.close)

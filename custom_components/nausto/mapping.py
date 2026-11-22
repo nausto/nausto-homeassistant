@@ -106,6 +106,10 @@ def kind(entity: Entity) -> tuple[str, str, str] | None:
     if not isinstance(entity.device_class, (str, type(None))) or not isinstance(entity.unit, (str, type(None))):
         return None
     domain = entity.entity_id.partition(".")[0]
+    # En event-entitet er en hendelse etter HAs egen definisjon: tilstanden er tidspunktet for siste
+    # hendelse, og Nausto får «on» med det tidspunktet (ADR 345).
+    if domain == "event":
+        return ("state", "none", "derived")
     if domain == "binary_sensor":
         return ("alarm" if entity.device_class in ALARMS else "state", "none", "derived")
     if domain == "counter" and entity.device_class is None and entity.unit in (None, "1"):
@@ -147,11 +151,15 @@ def catalog(connection_id: str, instance_id: str, entities: list[Entity]) -> dic
         external = f"entity:{entity.registry_id}:{quantity}:{unit}:{provenance}"
         channel_id = str(uuid5(namespace, f"channel:{source_id}:{external}"))
         name = entity.name if not entity.device_name else f"{entity.device_name} · {entity.name}"
-        channels.append({
+        channel = {
             "id": channel_id, "source_id": source_id, "external_id": external,
             "name": label(name), "quantity": quantity, "unit": unit, "provenance": provenance,
             "_registry_id": entity.registry_id,
-        })
+        }
+        # Måten sies bare der HA vet den (ADR 345); en binary_sensor kan bare melde «på».
+        if is_event(entity):
+            channel["reporting"] = "event"
+        channels.append(channel)
     if len(sources) > MAX_SOURCES:
         raise ValueError("source_limit")
     return {"sources": list(sources.values()), "channels": channels}
@@ -162,6 +170,10 @@ def discovery(value: dict) -> dict:
             "channels": [{k: v for k, v in channel.items() if not k.startswith("_")} for channel in value["channels"]]}
 
 
+def is_event(entity: Entity) -> bool:
+    return entity.entity_id.partition(".")[0] == "event"
+
+
 def reading(entity: Entity, channel: dict) -> dict | None:
     if entity.restored:
         return None
@@ -169,6 +181,15 @@ def reading(entity: Entity, channel: dict) -> dict | None:
     # En gammel cache uten kildeklokke gjøres aldri til et nytt opptak.
     if updated is None or reported is None or reported < updated:
         return None
+    if is_event(entity) and entity.state not in (None, "unavailable", "unknown"):
+        # Hendelsen skjedde da tilstanden sier, ikke da HA skrev den: en omstart gjenoppretter samme
+        # tidspunkt, og samme observasjon blir aldri en ny hendelse. Den bekreftes aldri senere.
+        happened = instant(entity.state)
+        if happened is None or happened > reported:
+            return {"channel_id": channel["id"], "source_id": channel["source_id"],
+                    "observed_at": updated, "confirmed_at": reported, "value": None, "quality": "unknown"}
+        return {"channel_id": channel["id"], "source_id": channel["source_id"],
+                "observed_at": happened, "confirmed_at": happened, "value": "on", "quality": "good"}
     quality, value = "good", None
     if entity.state is None or entity.state == "unavailable":
         quality = "unavailable"

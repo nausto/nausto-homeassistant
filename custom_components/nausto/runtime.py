@@ -9,12 +9,12 @@ import time
 
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
-from homeassistant.helpers import entity_registry, issue_registry
+from homeassistant.helpers import device_registry, entity_registry, issue_registry
 
 from .client import Client
 from .control import ControlRuntime, digest
 from .const import ALARM_LANE_MS, INTERVAL_SECONDS, MAX_ATTEMPTS, PRIORITY_LIMITS, REQUEST_INTERVAL_MS, WAKE_MS
-from .entities import metadata, snapshots
+from .entities import discovery_settings, in_area, include_discovered, metadata, snapshots
 from .live import Lane, Live, Values, live_url
 from .mapping import catalog, discovery, instant, kind, reading
 from .store import encoded
@@ -31,6 +31,7 @@ class Runtime:
         self.connection_id = entry.data["connection_id"]
         self.instance_id = entry.data["instance_id"]
         self.registry_ids = entry.options.get("entities", entry.data.get("entities", []))
+        self.discover_all, self.discover_area = discovery_settings(entry)
         self.entities, self.channels, self.catalog = {}, {}, {"sources": [], "channels": []}
         self.selected = set()
         self.pending = asyncio.Queue(maxsize=100)
@@ -74,6 +75,7 @@ class Runtime:
         self.listeners = [
             self.hass.bus.async_listen("entity_registry_updated", self.registry_changed),
             self.hass.bus.async_listen("device_registry_updated", self.registry_changed),
+            self.hass.bus.async_listen("area_registry_updated", self.registry_changed),
             async_track_time_interval(self.hass, self.periodic, timedelta(seconds=INTERVAL_SECONDS)),
         ]
         self.entry.async_on_unload(self.unsubscribe)
@@ -94,6 +96,11 @@ class Runtime:
     async def _refresh(self):
         previous = await self.db(self.store.get, "entity_metadata", {})
         values = snapshots(self.hass, self.registry_ids, previous)
+        await self.actuation.refresh()
+        if self.discover_all or self.discover_area:
+            discovered = snapshots(self.hass, area_id=None if self.discover_all else self.discover_area)
+            devices = {entity.device_id for entity in self.actuation.entities.values()}
+            values = include_discovered(values, discovered, previous, devices)
         offered = catalog(self.connection_id, self.instance_id, values)
         await self.db(self.store.configure, offered, clock())
         await self.db(self.store.set, "entity_metadata", metadata(values))
@@ -105,7 +112,6 @@ class Runtime:
             self.state_unsubscribe()
         self.state_unsubscribe = async_track_state_change_event(self.hass, [entity.entity_id for entity in values], self.state_changed)
         self.next_scan = clock() + 60_000
-        await self.actuation.refresh()
         if len({source["id"] for source in offered["sources"] + self.actuation.offer["sources"]}) > 16:
             self.actuation.by_id.clear()
             raise ValueError("source_limit")
@@ -152,6 +158,13 @@ class Runtime:
         channel = self.channels.get(entity.registry_id)
         if self.stopped or channel is None or channel["id"] not in self.selected:
             return
+        if self.discover_area and entity.registry_id not in self.registry_ids:
+            # Området kan ha endret seg før den asynkrone kataloglesingen er ferdig.
+            entry = entity_registry.async_get(self.hass).async_get(entity.entity_id)
+            devices = device_registry.async_get(self.hass)
+            device = devices.async_get(entry.device_id) if entry and entry.device_id else None
+            if entry is None or entry.id != entity.registry_id or not in_area(entry, device, self.discover_area):
+                return
         value = reading(entity, channel)
         if value is None and self.live is None:
             return
@@ -165,7 +178,7 @@ class Runtime:
 
     def poll(self):
         # Les rapporttiden fra HA. Periodisk kjøring setter aldri et nytt kildetidspunkt.
-        for entity in snapshots(self.hass, self.registry_ids, metadata(list(self.entities.values()))):
+        for entity in snapshots(self.hass, list(self.entities), metadata(list(self.entities.values()))):
             self.enqueue(entity)
 
     async def write_events(self):

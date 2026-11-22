@@ -155,18 +155,29 @@ class Store:
                 return False, None
             fingerprint = hashlib.sha256(encoded(reading).encode()).hexdigest()
             previous = state["cursors"].get(channel["id"])
+            repeated = previous is not None and previous["fingerprint"] == fingerprint
+            # En hendelse har alltid verdien «på» (ADR 345), så en ny hendelse er et nytt tidspunkt, ikke en
+            # ny verdi. Den går som en overgang. Siste hendelsestid står i markøren gjennom mellomliggende
+            # «utilgjengelig» og «ukjent», så samme hendelse lest på nytt aldri blir en ny.
+            fired = (milliseconds(reading["observed_at"])
+                     if channel.get("reporting") == "event" and reading["value"] is not None else None)
+            last_fired = (previous or {}).get("event_at")
+            if fired is not None and last_fired is not None and fired <= last_fired:
+                self.set("captures", state)
+                return False, None
+            event = previous is not None and fired is not None and not repeated
             transition = previous is not None and (
-                previous.get("quality") != reading["quality"] or
+                previous.get("quality") != reading["quality"] or event or
                 (channel["quantity"] in ("state", "alarm") and previous.get("value") != reading["value"]))
             # En alarmovergang er en ny verdi som ikke er null på en av/på- eller alarmkanal, fra en kjent
-            # tidligere avlesning. Den kan gå på alarmsporet; endret kvalitet og tall følger urgent.
-            alarm = (previous is not None and channel["quantity"] in ("state", "alarm") and
-                     reading["value"] is not None and previous.get("value") != reading["value"])
+            # tidligere avlesning, eller en ny hendelse. Den kan gå på alarmsporet; endret kvalitet og tall
+            # følger urgent.
+            alarm = event or (previous is not None and channel["quantity"] in ("state", "alarm") and
+                              reading["value"] is not None and previous.get("value") != reading["value"])
             quiet = previous is not None and (
                 abs(reading["value"] - previous["value"]) < DEADBANDS.get(channel["quantity"], 0)
                 if type(reading["value"]) in (int, float) and type(previous["value"]) in (int, float)
                 else previous["value"] == reading["value"])
-            repeated = previous is not None and previous["fingerprint"] == fingerprint
             # Samme observasjon som siste liveverdi, som en tilstand lest på nytt, beholder ID-en den fikk.
             known = self.known.get(channel["id"])
             same = known["observation"] if known is not None and known["fingerprint"] == fingerprint else None
@@ -197,7 +208,10 @@ class Store:
             if alarm:
                 # Kildetiden, som serverens ferskhet måles mot; aldri senere enn opptaket.
                 state["alarm_at"] = max(state.get("alarm_at") or 0, min(now, source_at))
-            state["cursors"][channel["id"]] = {"fingerprint": fingerprint, "at": now, "value": reading["value"], "quality": reading["quality"]}
+            cursor = {"fingerprint": fingerprint, "at": now, "value": reading["value"], "quality": reading["quality"]}
+            if fired is not None or last_fired is not None:
+                cursor["event_at"] = fired if fired is not None else last_fired
+            state["cursors"][channel["id"]] = cursor
             # Siste batchede opptak per kanal til øyeblikksbildet etter omstart; i samme transaksjon som
             # opptaket, uten en egen commit. En verdi bare strømmen har fått, står aldri her.
             self.db.execute("insert into live values(?,?) on conflict(channel) do update set observation=excluded.observation",

@@ -4,9 +4,11 @@
     "step": {
       "user": {
         "title": "Connect to Nausto",
-        "description": "Choose the entities for your boat. Open Boat → Sensors in Nausto, add a data source and enter its eight-character code here, or paste a copied pairing code. Older codes still work. The code expires after ten minutes. Then return to Nausto to choose which sensors to follow and connect them to the right components. Switches and lights on the same device as a shared sensor can be turned on and off from Nausto. Choose other switches and lights in the same list. Nausto never turns off a circuit with bilge pump or alarm in its name. A circuit with windlass, winch, propeller or thruster in its name is not listed and is never switched from Nausto.",
+        "description": "Choose an area to find new sensors automatically, or follow the entire installation if it is only used on board. You can add individual entities from the list. Open Boat → Sensors in Nausto, add a data source and enter its eight-character code here, or paste a copied pairing code. Older codes still work. The code expires after ten minutes. Then return to Nausto to choose which sensors to follow and connect them to the right components. To control switches and lights, select them or a sensor on the same device from the list. Nausto never turns off a circuit with bilge pump or alarm in its name. A circuit with windlass, winch, propeller or thruster in its name is not listed and is never switched from Nausto.",
         "data": {
           "pairing_code": "Pairing code from Nausto",
+          "discover_all": "Find new sensors across this installation",
+          "discover_area": "Find new sensors in this area",
           "entities": "Sensors, switches and lights for the boat"
         }
       }
@@ -15,6 +17,7 @@
       "cannot_connect": "Could not reach Nausto. Check your internet connection and try again.",
       "pairing_failed": "This code could not be used. Create a new code in Nausto and try again.",
       "invalid_code": "Enter the eight-character code from Nausto, or paste the complete copied pairing code.",
+      "invalid_scope": "Choose either the entire installation or one existing Home Assistant area.",
       "invalid_entities": "Choose up to 64 supported entities from the list.",
       "source_limit": "These entities use more than 16 sources. Choose fewer devices.",
       "wrong_boat": "This code belongs to a different connection. Create a code for the original data source in Nausto.",
@@ -35,14 +38,17 @@
     "step": {
       "init": {
         "title": "Sensors for Nausto",
-        "description": "Choose the entities to offer to your boat. Open Sensors in Nausto to choose which ones to follow, assign components and select primary sources. Switches and lights on the same device as a shared sensor can be turned on and off from Nausto. Choose other switches and lights in the same list. Nausto never turns off a circuit with bilge pump or alarm in its name. A circuit with windlass, winch, propeller or thruster in its name is not listed and is never switched from Nausto.",
+        "description": "Choose an area to find new sensors automatically, or follow the entire installation if it is only used on board. You can add individual entities from the list. Open Sensors in Nausto to choose which ones to follow, assign components and select primary sources. To control switches and lights, select them or a sensor on the same device from the list. Nausto never turns off a circuit with bilge pump or alarm in its name. A circuit with windlass, winch, propeller or thruster in its name is not listed and is never switched from Nausto.",
         "data": {
+          "discover_all": "Find new sensors across this installation",
+          "discover_area": "Find new sensors in this area",
           "entities": "Sensors, switches and lights for the boat",
           "retry_failed": "Retry the connection"
         }
       }
     },
     "error": {
+      "invalid_scope": "Choose either the entire installation or one existing Home Assistant area.",
       "invalid_entities": "Choose up to 64 supported entities from the list.",
       "source_limit": "These entities use more than 16 sources. Choose fewer devices.",
       "invalid_controls": "Select up to 16 switches and lights."

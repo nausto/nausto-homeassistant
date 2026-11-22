@@ -4,9 +4,11 @@
     "step": {
       "user": {
         "title": "Koble til Nausto",
-        "description": "Velg entitetene som gjelder båten. Opprett en datakilde under Båten → Sensorer i Nausto og skriv koden med åtte tegn her, eller lim inn en kopiert paringskode. Eldre koder virker fortsatt. Koden gjelder i ti minutter. Etter tilkoblingen velger du hva Nausto skal følge og hvilken komponent hver sensor tilhører. Brytere og lys på samme enhet som en delt sensor kan slås av og på fra Nausto. Andre brytere og lys velger du i samme liste. Nausto slår aldri av en krets med lensepumpe eller alarm i navnet. En krets med ankerspill, vinsj eller propell i navnet står ikke i lista og styres aldri fra Nausto.",
+        "description": "Velg et område for å finne nye sensorer automatisk, eller følg hele installasjonen hvis den bare brukes om bord. Enkeltvalg kan legges til i lista. Opprett en datakilde under Båten → Sensorer i Nausto og skriv koden med åtte tegn her, eller lim inn en kopiert paringskode. Eldre koder virker fortsatt. Koden gjelder i ti minutter. Etter tilkoblingen velger du hva Nausto skal følge og hvilken komponent hver sensor tilhører. For å styre brytere og lys velger du dem eller en sensor på samme enhet i lista. Nausto slår aldri av en krets med lensepumpe eller alarm i navnet. En krets med ankerspill, vinsj eller propell i navnet står ikke i lista og styres aldri fra Nausto.",
         "data": {
           "pairing_code": "Paringskode fra Nausto",
+          "discover_all": "Finn nye sensorer i hele installasjonen",
+          "discover_area": "Finn nye sensorer i dette området",
           "entities": "Sensorer, brytere og lys til båten"
         }
       }
@@ -15,6 +17,7 @@
       "cannot_connect": "Kunne ikke nå Nausto. Kontroller internettforbindelsen og prøv igjen.",
       "pairing_failed": "Koden kunne ikke brukes. Lag en ny kode i Nausto og prøv igjen.",
       "invalid_code": "Skriv koden med åtte tegn fra Nausto, eller lim inn hele den kopierte paringskoden.",
+      "invalid_scope": "Velg enten hele installasjonen eller ett område som finnes i Home Assistant.",
       "invalid_entities": "Velg høyst 64 støttede entiteter fra listen.",
       "source_limit": "Entitetene kommer fra flere enn 16 kilder. Velg færre enheter.",
       "wrong_boat": "Koden gjelder en annen tilkobling. Lag en ny kode for den opprinnelige datakilden i Nausto.",
@@ -35,14 +38,17 @@
     "step": {
       "init": {
         "title": "Sensorer til Nausto",
-        "description": "Velg entitetene som skal tilbys båten. Du velger hva som følges, tilhørighet og primærkilde under Sensorer i Nausto. Brytere og lys på samme enhet som en delt sensor kan slås av og på fra Nausto. Andre brytere og lys velger du i samme liste. Nausto slår aldri av en krets med lensepumpe eller alarm i navnet. En krets med ankerspill, vinsj eller propell i navnet står ikke i lista og styres aldri fra Nausto.",
+        "description": "Velg et område for å finne nye sensorer automatisk, eller følg hele installasjonen hvis den bare brukes om bord. Enkeltvalg kan legges til i lista. Du velger hva som følges, tilhørighet og primærkilde under Sensorer i Nausto. For å styre brytere og lys velger du dem eller en sensor på samme enhet i lista. Nausto slår aldri av en krets med lensepumpe eller alarm i navnet. En krets med ankerspill, vinsj eller propell i navnet står ikke i lista og styres aldri fra Nausto.",
         "data": {
+          "discover_all": "Finn nye sensorer i hele installasjonen",
+          "discover_area": "Finn nye sensorer i dette området",
           "entities": "Sensorer, brytere og lys til båten",
           "retry_failed": "Prøv tilkoblingen på nytt"
         }
       }
     },
     "error": {
+      "invalid_scope": "Velg enten hele installasjonen eller ett område som finnes i Home Assistant.",
       "invalid_entities": "Velg høyst 64 støttede entiteter fra listen.",
       "source_limit": "Entitetene kommer fra flere enn 16 kilder. Velg færre enheter.",
       "invalid_controls": "Velg høyst 16 brytere og lys."
