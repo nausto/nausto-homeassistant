@@ -20,7 +20,7 @@
       "invalid_scope": "Velg enten hele installasjonen eller ett område som finnes i Home Assistant.",
       "invalid_entities": "Velg høyst 64 støttede entiteter fra listen.",
       "source_limit": "Entitetene kommer fra flere enn 16 kilder. Velg færre enheter.",
-      "wrong_boat": "Koden gjelder en annen tilkobling. Lag en ny kode for den opprinnelige datakilden i Nausto.",
+      "wrong_boat": "Koden gjelder en annen tilkobling. Hvis den opprinnelige datakilden fortsatt finnes, lag en ny kode for den i Nausto. Hvis den er borte, lag en ny kode for den nye datakilden og velg Legg til integrasjon → Nausto i Home Assistant. Målingene som er sendt, blir i Nausto.",
       "wrong_connection": "Tilkoblingen kunne ikke bekreftes. Lag en ny kode i Nausto.",
       "instance_changed": "Denne tilkoblingen hører til en annen Home Assistant-installasjon. Fjern de gamle Nausto-integrasjonene her og legg til på nytt. Mottatt historikk i Nausto beholdes.",
       "pairing_limit": "Flere oppsett er allerede startet. Fullfør ett av dem eller prøv igjen om ti minutter.",

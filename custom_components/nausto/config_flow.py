@@ -120,6 +120,9 @@ class NaustoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             client = Client(aiohttp_client.async_get_clientsession(self.hass))
             code, expected_connection = read_pairing(code, client.endpoint)
+            existing = self._get_reauth_entry() if self.source == config_entries.SOURCE_REAUTH else None
+            if existing is not None and expected_connection is not None and existing.data["connection_id"] != expected_connection:
+                return self.async_show_form(step_id="user", data_schema=form, errors={"base": "wrong_boat"})
             profiles = await self.hass.async_add_executor_job(Profiles, Path(self.hass.config.path(".storage", DOMAIN)), instance)
             if code.startswith("nsc_") and await self.hass.async_add_executor_job(profiles.index.get, "pairing_retry_at", 0) > now():
                 return self.async_show_form(step_id="user", data_schema=form, errors={"base": "pairing_rate_limited"})
@@ -135,7 +138,6 @@ class NaustoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.hass.async_add_executor_job(profiles.index.set, "pairing_retry_at", 0)
             if expected_connection is not None and expected_connection != target:
                 raise ValueError("wrong_connection")
-            existing = self._get_reauth_entry() if self.source == config_entries.SOURCE_REAUTH else None
             if existing is not None and existing.data["connection_id"] != target:
                 return self.async_show_form(step_id="user", data_schema=form, errors={"base": "wrong_boat"})
             active = [entry.data["connection_id"] for entry in self._async_current_entries()]

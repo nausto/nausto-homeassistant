@@ -20,7 +20,7 @@
       "invalid_scope": "Choose either the entire installation or one existing Home Assistant area.",
       "invalid_entities": "Choose up to 64 supported entities from the list.",
       "source_limit": "These entities use more than 16 sources. Choose fewer devices.",
-      "wrong_boat": "This code belongs to a different connection. Create a code for the original data source in Nausto.",
+      "wrong_boat": "This code belongs to a different connection. If the original data source is still available, create a code for it in Nausto. If it’s gone, create a fresh code for the new data source and use Add integration → Nausto in Home Assistant. Readings already sent stay in Nausto.",
       "wrong_connection": "The connection could not be verified. Create a new code in Nausto.",
       "instance_changed": "This connection belongs to another Home Assistant instance. Remove the old Nausto integrations here, then add Nausto again. History already received in Nausto is kept.",
       "pairing_limit": "Several setup attempts are in progress. Finish one or try again in ten minutes.",
