@@ -1,9 +1,14 @@
 """Felles grenser; mottaket settes fra Naustos offentlige profil ved pakking."""
 
 DOMAIN = "nausto"
-VERSION = "0.8.1"
-ENDPOINT = "https://xhlmyytzkiwipacspjsg.supabase.co/functions/v1/sensor-ingest"
+VERSION = "0.9.0"
+# Den faste mottaksadressen (ADR 371). Det tidligere navnet er prosjektets funksjonsadresse, som
+# eldre QR-konvolutter fra Nausto har; de gjelder det samme mottaket.
+ENDPOINT = "https://nausto.no/integrasjoner/sensors/ingest"
+LEGACY_ENDPOINT = "https://xhlmyytzkiwipacspjsg.supabase.co/functions/v1/sensor-ingest"
 PAIR_ENDPOINT = "https://nausto.no/integrasjoner/sensors/pair"
+INGEST_ENDPOINT = "https://nausto.no/integrasjoner/sensors/ingest"
+INGEST_PATH = "/integrasjoner/sensors/ingest"
 MAX_ENTITIES = 64
 MAX_SOURCES = 16
 MAX_OBSERVATIONS = 100

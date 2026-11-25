@@ -20,15 +20,32 @@ class Receipt:
     limited: str | None = None
 
 
+def _loopback(url) -> bool:
+    return url.scheme == "http" and url.hostname in ("127.0.0.1", "localhost", "::1")
+
+
 class Client:
-    def __init__(self, session: aiohttp.ClientSession, endpoint: str | None = None, pair_endpoint: str | None = None):
+    def __init__(self, session: aiohttp.ClientSession, endpoint: str | None = None, pair_endpoint: str | None = None,
+                 legacy_endpoints: tuple[str, ...] | None = None):
         self.session = session
+        # Målingene går bare til den faste mottaksadressen (ADR 371), eller loopback i prøver.
         self.endpoint = endpoint or const.ENDPOINT
         url = urlsplit(self.endpoint)
         if (url.username or url.password or url.query or url.fragment or
-                url.path != "/functions/v1/sensor-ingest" or
-                not (url.scheme == "https" or (url.scheme == "http" and url.hostname in ("127.0.0.1", "localhost", "::1")))):
+                url.path != const.INGEST_PATH or
+                not (self.endpoint == const.INGEST_ENDPOINT or _loopback(url))):
             raise ValueError("invalid_endpoint")
+        # Tidligere navn på mottaket. En QR-konvolutt med et av dem gjelder det samme mottaket; ingen
+        # måling sendes dit.
+        self.legacy_endpoints = tuple(
+            alias for alias in (const.LEGACY_ENDPOINT,) if alias != self.endpoint
+        ) if legacy_endpoints is None else legacy_endpoints
+        for alias in self.legacy_endpoints:
+            legacy = urlsplit(alias)
+            if (legacy.username or legacy.password or legacy.query or legacy.fragment or
+                    legacy.path != "/functions/v1/sensor-ingest" or
+                    not (legacy.scheme == "https" or _loopback(legacy))):
+                raise ValueError("invalid_endpoint")
         self.pair_endpoint = pair_endpoint or const.PAIR_ENDPOINT
         pair = urlsplit(self.pair_endpoint)
         if (pair.username or pair.password or pair.query or pair.fragment or

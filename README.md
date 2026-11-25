@@ -28,7 +28,10 @@ Du kan også installere manuelt: kopier utgivelsens `custom_components/nausto` t
 Koder og nøkler skal ikke legges i chat, logger eller feilrapporter.
 
 Åttetegnskoden bruker `https://nausto.no/integrasjoner/sensors/pair`. Målinger, eldre koder og
-QR-paring beholder det eksisterende sensor-endepunktet. Kortkodeparing har fem forskjellige
+QR-paring går fra 0.9.0 til Naustos faste mottaksadresse `https://nausto.no/integrasjoner/sensors/ingest`.
+En integrasjon som er paret med en eldre utgave, bruker den etter oppgraderingen med samme paring,
+nøkkel, valg og kø; ingenting må pares på nytt. Kopiert paringsinformasjon fra Nausto med den
+tidligere adressen virker fortsatt. Kortkodeparing har fem forskjellige
 kode-/nøkkelkombinasjoner per nettadresse (IPv6 /64) på ti minutter; delte nett deler grensen.
 En ny kode nullstiller ikke grensen. Vent før du prøver igjen ved for mange forsøk. Identisk
 retry etter tapt svar bruker ikke et nytt forsøk.
@@ -215,8 +218,11 @@ entities. Older codes and copied QR payloads remain supported. Return to Nausto
 to follow each channel, assign its component and choose its primary source. The setup and
 options forms are available in English and Norwegian.
 
-Eight-character codes use Nausto's pairing endpoint on `nausto.no`; measurements, older codes
-and QR pairing keep the existing sensor endpoint. Five different code/key combinations are
+Eight-character codes use Nausto's pairing endpoint on `nausto.no`. From 0.9.0, measurements,
+older codes and QR pairing use Nausto's fixed receiving address
+`https://nausto.no/integrasjoner/sensors/ingest`. An integration paired with an earlier version uses
+it after the upgrade with the same pairing, key, choices and queue; nothing needs pairing again.
+Copied pairing information from Nausto with the earlier address still works. Five different code/key combinations are
 allowed per network address (IPv6 /64) in ten minutes. Shared networks share this allowance.
 A new code does not reset it; an identical retry after a lost response does not spend another attempt.
 

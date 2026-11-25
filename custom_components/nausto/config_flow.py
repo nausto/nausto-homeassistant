@@ -119,7 +119,7 @@ class NaustoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         profiles = None
         try:
             client = Client(aiohttp_client.async_get_clientsession(self.hass))
-            code, expected_connection = read_pairing(code, client.endpoint)
+            code, expected_connection = read_pairing(code, client.endpoint, client.legacy_endpoints)
             existing = self._get_reauth_entry() if self.source == config_entries.SOURCE_REAUTH else None
             if existing is not None and expected_connection is not None and existing.data["connection_id"] != expected_connection:
                 return self.async_show_form(step_id="user", data_schema=form, errors={"base": "wrong_boat"})
